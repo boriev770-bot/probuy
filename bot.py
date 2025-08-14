@@ -3,7 +3,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
 import asyncio
 
-TOKEN = "ВСТАВЬ_СВОЙ_ТОКЕН"
+TOKEN = "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI"
 
 # FAQ: ключевые слова (regex) -> ответ
 FAQ = {
