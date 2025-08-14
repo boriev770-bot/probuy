@@ -74,7 +74,7 @@ async def search_answer(message: types.Message):
             f"📩 Запрос к оператору!\n"
             f"Имя: {message.from_user.full_name}\n"
             f"Username: @{message.from_user.username if message.from_user.username else 'нет'}\n"
-            f"Сообщение: {me@dp.message_handler()
+            f"Сообщение: {me@dp.message_handler}\n"
 async def search_answer(message: types.Message):
     user_id = message.from_user.id
     text = message.text.lower() if message.text else ""
