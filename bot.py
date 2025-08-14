@@ -46,7 +46,7 @@ async def start(message: types.Message):
 async def ask_order(message: types.Message):
     user_id = message.from_user.id
     waiting_for_order.add(user_id)
-    await message.answer("Расскажите, что вы хотите заказать? В каком количестве?(пожалуйста, количество пишите буквами(например: тысяча, тысяча двести)")
+    await message.answer("Расскажите, что вы хотите заказать? В каком количестве?")
 
 @dp.message_handler()
 async def search_answer(message: types.Message):
