@@ -13,6 +13,22 @@ FAQ = {
     r"(время.*|доставк.*|сроки*)": "Сроки доставки быстрым авто: 10-15 дней, медленным авто: 15-20 дней. (Сроки доставки указаны до рынка Южные Ворота в г.Москва."
     }
 
+def find_best_match(user_text):
+    user_text = user_text.lower()
+    best_match = None
+    best_score = 0
+
+    for pattern, answer in FAQ.items():
+        match = re.findall(pattern, user_text)
+        if match:
+            # Чем больше совпадений в тексте, тем выше оценка
+            score = sum(len(m) for m in match)
+            if score > best_score:
+                best_score = score
+                best_match = answer
+
+    return best_match
+    
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 
