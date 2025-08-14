@@ -4,7 +4,7 @@ import asyncio
 from aiogram import Bot, Dispatcher, types
 
 TOKEN = "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI"
-ADMIN_ID = @probuykmvadmin  
+ADMIN_ID = 7095008192  
 
 FAQ = {
     r"(сдела.*|заказ.*)": "Для заказа напишите нам в телеграм @probuykmvadmin",
@@ -44,7 +44,7 @@ async def search_answer(message: types.Message):
     if "оператор" in text:
         await message.answer("Оператор скоро свяжется с вами.")
         await bot.send_message(
-            @probuykmvadmin,
+            7095008192,
             f"📩 Запрос к оператору!\n"
             f"Имя: {message.from_user.full_name}\n"
             f"Username: @{message.from_user.username if message.from_user.username else 'нет'}\n"
