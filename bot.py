@@ -9,6 +9,7 @@ TOKEN = "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI"
 # FAQ: ключевые слова (regex) -> ответ
 FAQ = {
     r"(сдела.*|заказ.*)": "Для заказа напишите нам в телеграм @probuykmvadmin"
+    r"(эльдар.*)": "Э, динахуй!"
 }
 
 bot = Bot(token=TOKEN)
