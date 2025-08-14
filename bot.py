@@ -42,7 +42,7 @@ async def start(message: types.Message):
         "Чтобы оформить заказ — выберете /заказ в меню."
     )
 
-@dp.message_handler(commands=['/buy'])
+@dp.message_handler(commands=['buy'])
 async def ask_order(message: types.Message):
     user_id = message.from_user.id
     waiting_for_order.add(user_id)
