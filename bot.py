@@ -50,5 +50,5 @@ async def search_answer(message: types.Message):
     else:
         await message.answer("Извини, я не нашёл ответа на этот вопрос. Напиши нам @probuykmvadmin")
 
-if name == '__main__':
+if __name__ == '__main__':
     asyncio.run(dp.start_polling())
