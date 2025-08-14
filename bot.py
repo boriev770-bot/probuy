@@ -74,6 +74,50 @@ async def search_answer(message: types.Message):
             f"📩 Запрос к оператору!\n"
             f"Имя: {message.from_user.full_name}\n"
             f"Username: @{message.from_user.username if message.from_user.username else 'нет'}\n"
+            f"Сообщение: {me@dp.message_handler()
+async def search_answer(message: types.Message):
+    user_id = message.from_user.id
+    text = message.text.lower() if message.text else ""
+
+    # Если ждём от пользователя сообщение по заказу
+    if user_id in waiting_for_order:
+        # Если сообщение с текстом
+        if message.text:
+            await bot.send_message(
+                ADMIN_ID,
+                f"📦 Новый заказ!\n"
+                f"Имя: {message.from_user.full_name}\n"
+                f"Username: @{message.from_user.username if message.from_user.username else 'нет'}\n"
+                f"Сообщение: {message.text}"
+            )
+        # Если есть фото
+        elif message.photo:
+            photo_id = message.photo[-1].file_id
+            await bot.send_photo(
+                ADMIN_ID,
+                photo=photo_id,
+                caption=f"📦 Новый заказ!\nИмя: {message.from_user.full_name}\nUsername: @{message.from_user.username if message.from_user.username else 'нет'}"
+            )
+        # Если есть документ
+        elif message.document:
+            await bot.send_document(
+                ADMIN_ID,
+                document=message.document.file_id,
+                caption=f"📦 Новый заказ!\nИмя: {message.from_user.full_name}\nUsername: @{message.from_user.username if message.from_user.username else 'нет'}"
+            )
+
+        await message.answer("Спасибо! Мы получили ваш заказ. Менеджер скоро свяжется с вами.")
+        waiting_for_order.remove(user_id)
+        return
+
+    # Если пользователь просит оператора
+    if "оператор" in text:
+        await message.answer("Оператор скоро свяжется с Вами. Спасибо за обращение!")
+        await bot.send_message(
+            ADMIN_ID,
+            f"📩 Запрос к оператору!\n"
+            f"Имя: {message.from_user.full_name}\n"
+            f"Username: @{message.from_user.username if message.from_user.username else 'нет'}\n"
             f"Сообщение: {message.text}"
         )
         return
