@@ -1,18 +1,20 @@
 import os
 import re
+import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
-import asyncio
 
+# Токен бота
 TOKEN = "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI"
 
 # FAQ: ключевые слова (regex) -> ответ
 FAQ = {
     r"(сдела.*|заказ.*)": "Для заказа напишите нам в телеграм @probuykmvadmin",
-    r"(сколь.*|стои.*|доставк.*)": "Стоимость доставки рассчитывается индивидуально исходя из плотности, веса груза. Напишите нам @probuykmvadmin и мы предоставим подробный расчет стоимости.",
-    r"(время.*|доставк.*|сроки*)": "Сроки доставки быстрым авто: 10-15 дней, медленным авто: 15-20 дней. (Сроки доставки указаны до рынка Южные Ворота в г.Москва."
-    }
+    r"(сколь.*|стои.*|доставк.*цена.*|цена.*доставк.*)": "Стоимость доставки рассчитывается индивидуально исходя из плотности, веса груза. Напишите нам @probuykmvadmin и мы предоставим подробный расчет стоимости.",
+    r"(время.*|срок.*|когда.*придет.*|через.*дней.*|сроки.*доставк.*)": "Сроки доставки быстрым авто: 10-15 дней, медленным авто: 15-20 дней. (Сроки доставки указаны до рынка Южные Ворота в г.Москва.)"
+}
 
+# Функция умного поиска
 def find_best_match(user_text):
     user_text = user_text.lower()
     best_match = None
@@ -21,14 +23,15 @@ def find_best_match(user_text):
     for pattern, answer in FAQ.items():
         match = re.findall(pattern, user_text)
         if match:
-            # Чем больше совпадений в тексте, тем выше оценка
+            # Чем длиннее найденные совпадения, тем выше оценка
             score = sum(len(m) for m in match)
             if score > best_score:
                 best_score = score
                 best_match = answer
 
     return best_match
-    
+
+# Создаем бота и диспетчер
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 
@@ -41,12 +44,11 @@ async def start(message: types.Message):
 
 @dp.message_handler()
 async def search_answer(message: types.Message):
-    text = message.text.lower()
-    for pattern, answer in FAQ.items():
-        if re.search(pattern, text):
-            await message.answer(answer)
-            return
-    await message.answer("Извини, я не нашёл ответа на этот вопрос.")
+    response = find_best_match(message.text)
+    if response:
+        await message.answer(response)
+    else:
+        await message.answer("Извини, я не нашёл ответа на этот вопрос. Напиши нам @probuykmvadmin")
 
-if __name__ == '__main__':
-    asyncio.run(executor.start_polling(dp))
+if name == '__main__':
+    asyncio.run(dp.start_polling())
