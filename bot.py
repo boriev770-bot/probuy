@@ -22,6 +22,14 @@ async def start(message: types.Message):
         "Например: 'Сколько стоит доставка?' или 'Как сделать заказ?'"
     )
 
+if text == Оператор:
+        await bot.send_message(
+            chat_id=probuykmvadmin,
+            text=f"Получено контрольное слово '{оператор}' от пользователя {message.from_user.id} (@{message.from_user.username})"
+        )
+        await message.answer("Спасибо! Оператор скоро ответит Вам.")
+        return
+    
 @dp.message_handler()
 async def search_answer(message: types.Message):
     text = message.text.lower()
