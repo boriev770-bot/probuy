@@ -56,7 +56,7 @@ async def search_answer(message: types.Message):
     # Если ждём от пользователя сообщение по заказу
     if user_id in waiting_for_order:
         await bot.send_message(
-            ADMIN_ID,
+            7095008192,
             f"📦 Новый заказ!\n"
             f"Имя: {message.from_user.full_name}\n"
             f"Username: @{message.from_user.username if message.from_user.username else 'нет'}\n"
@@ -70,7 +70,7 @@ async def search_answer(message: types.Message):
     if "оператор" in text:
         await message.answer("Оператор скоро свяжется с Вами. Спасибо за обращение!")
         await bot.send_message(
-            ADMIN_ID,
+            7095008192,
             f"📩 Запрос к оператору!\n"
             f"Имя: {message.from_user.full_name}\n"
             f"Username: @{message.from_user.username if message.from_user.username else 'нет'}\n"
@@ -84,7 +84,7 @@ async def search_answer(message: types.Message):
         # Если сообщение с текстом
         if message.text:
             await bot.send_message(
-                ADMIN_ID,
+                7095008192,
                 f"📦 Новый заказ!\n"
                 f"Имя: {message.from_user.full_name}\n"
                 f"Username: @{message.from_user.username if message.from_user.username else 'нет'}\n"
@@ -94,14 +94,14 @@ async def search_answer(message: types.Message):
         elif message.photo:
             photo_id = message.photo[-1].file_id
             await bot.send_photo(
-                ADMIN_ID,
+                7095008192,
                 photo=photo_id,
                 caption=f"📦 Новый заказ!\nИмя: {message.from_user.full_name}\nUsername: @{message.from_user.username if message.from_user.username else 'нет'}"
             )
         # Если есть документ
         elif message.document:
             await bot.send_document(
-                ADMIN_ID,
+                7095008192,
                 document=message.document.file_id,
                 caption=f"📦 Новый заказ!\nИмя: {message.from_user.full_name}\nUsername: @{message.from_user.username if message.from_user.username else 'нет'}"
             )
