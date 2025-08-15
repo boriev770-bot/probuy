@@ -6,7 +6,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import os
 
 # --- НАСТРОЙКИ ---
-TOKEN = "ТОКЕН_ТВОЕГО_БОТА"
+TOKEN = "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI"
 ADMIN_ID = 7095008192
 USERS_FILE = "users.txt"
 
