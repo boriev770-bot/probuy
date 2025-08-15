@@ -8,7 +8,7 @@ from aiogram.utils import executor
 
 TOKEN = "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI"
 ADMIN_ID = 7095008192  # ID администратора
-WAREHOUSE_ID = ВСТАВЬ_ID_СКЛАДА  # ID сотрудника склада
+WAREHOUSE_ID = "ВСТАВЬ_ID_СКЛАДА"  # ID сотрудника склада (изменено на строку)
 
 DATA_FILE = "data.json"
 
@@ -26,7 +26,7 @@ def load_data():
 
 def save_data(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(data, data, ensure_ascii=False, indent=2)
 
 def find_best_match(user_text):
     user_text = user_text.lower()
@@ -47,19 +47,20 @@ dp = Dispatcher(bot)
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     await message.answer(
-    "Привет! Напиши свой вопрос или используй команды:\n"
-    "/getcod — получить личный номер\n"
-    "/adress — адрес склада\n"
-    "/sendtrack — отправить трек\n"
-    "Если нужен оператор — напиши 'оператор'."
-)
+        "Привет! Напиши свой вопрос или используй команды:\n"
+        "/getcod — получить личный номер\n"
+        "/adress — адрес склада\n"
+        "/sendtrack — отправить трек\n"
+        "Если нужен оператор — напиши 'оператор'."
+    )
+
 @dp.message_handler(commands=['getcod'])
 async def get_code(message: types.Message):
     data = load_data()
     user_id = str(message.from_user.id)
     if user_id not in data:
         last_number = max([int(v['code'][2:]) for v in data.values()] or [0])
-        new_code = f"PR{last_number+1:05d}"
+        new_code = f"PR{last_number + 1:05d}"
         data[user_id] = {"code": new_code, "tracks": []}
         save_data(data)
         await message.answer(f"Ваш личный номер: {new_code}")
@@ -88,13 +89,13 @@ async def text_handler(message: types.Message):
 
     if text == "оператор":
         await message.answer("Оператор скоро свяжется с вами.")
-        await bot.send_message(ADMIN_ID,
-                               f"📩 Запрос к оператору!
-Имя: {message.from_user.full_name}
-"
-                               f"Username: @{message.from_user.username or 'нет'}
-"
-                               f"Сообщение: {message.text}")
+        await bot.send_message(
+            ADMIN_ID,
+            f"📩 Запрос к оператору!\n"
+            f"Имя: {message.from_user.full_name}\n"
+            f"Username: @{message.from_user.username or 'нет'}\n"
+            f"Сообщение: {message.text}"
+        )
         return
 
     if hasattr(dp, "delivery_choice"):
@@ -105,12 +106,13 @@ async def text_handler(message: types.Message):
             return
         data[user_id]["tracks"].append({"track": message.text, "delivery": dp.delivery_choice})
         save_data(data)
-        await bot.send_message(WAREHOUSE_ID,
-                               f"📦 Новый трек!
-Код клиента: {data[user_id]['code']}
-"
-                               f"Трек: {message.text}
-Способ доставки: {dp.delivery_choice}")
+        await bot.send_message(
+            WAREHOUSE_ID,
+            f"📦 Новый трек!\n"
+            f"Код клиента: {data[user_id]['code']}\n"
+            f"Трек: {message.text}\n"
+            f"Способ доставки: {dp.delivery_choice}"
+        )
         await message.answer("Трек отправлен на склад.")
         del dp.delivery_choice
         return
@@ -122,4 +124,4 @@ async def text_handler(message: types.Message):
         await message.answer("Не понял вопрос. Напиши 'оператор' для связи.")
 
 if __name__ == "__main__":
-    asyncio.run(dp.start_polling())
+    executor.start_polling(dp, skip_updates=True)
