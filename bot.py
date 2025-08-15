@@ -7,7 +7,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 
 # Конфигурация
-TOKEN = os.getenv("TOKEN", "ВСТАВЬ_СЮДА_ТОКЕН_БОТА")
+TOKEN = os.getenv("TOKEN", "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7095008192"))
 WAREHOUSE_ID = int(os.getenv("WAREHOUSE_ID", "123456789"))
 WAREHOUSE_ADDRESS = os.getenv(
