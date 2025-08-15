@@ -5,14 +5,16 @@ from aiogram.dispatcher.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import os
 
-TOKEN = "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI"
+# --- НАСТРОЙКИ ---
+TOKEN = "ТОКЕН_ТВОЕГО_БОТА"
 ADMIN_ID = 7095008192
 USERS_FILE = "users.txt"
 
 # Хранилища данных
 waiting_for_order = set()
 active_users = set()
-user_data = {}  # Для хранения дополнительной информации о пользователях
+user_data = {}
+waiting_for_broadcast = False
 
 FAQ = {
     r"(?i)\b(сделать|заказ|заказать|оформить)\b": 
@@ -26,38 +28,33 @@ FAQ = {
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 
+# --- Работа с пользователями ---
 def save_user(user_id, username=None, first_name=None):
-    """Сохраняет данные пользователя"""
     user_id = str(user_id)
     if user_id not in active_users:
         active_users.add(user_id)
         user_data[user_id] = {
             'username': username,
-            'first_name': first_name,
-            'last_activity': asyncio.get_event_loop().time()
+            'first_name': first_name
         }
         with open(USERS_FILE, 'a') as f:
             f.write(f"{user_id},{username or ''},{first_name or ''}\n")
 
 def load_users():
-    """Загружает пользователей из файла"""
     if not os.path.exists(USERS_FILE):
         return
-        
     with open(USERS_FILE, 'r') as f:
         for line in f:
             if line.strip():
-                parts = line.strip().split(',')
-                if len(parts) >= 3:
-                    user_id, username, first_name = parts[0], parts[1], parts[2]
-                    active_users.add(user_id)
-                    user_data[user_id] = {
-                        'username': username if username else None,
-                        'first_name': first_name if first_name else None
-                    }
+                user_id, username, first_name = line.strip().split(',')[:3]
+                active_users.add(user_id)
+                user_data[user_id] = {
+                    'username': username if username else None,
+                    'first_name': first_name if first_name else None
+                }
 
+# --- Поиск в FAQ ---
 def find_best_match(text):
-    """Поиск ответа в FAQ"""
     if not text:
         return None
     text = text.lower()
@@ -66,8 +63,8 @@ def find_best_match(text):
             return answer
     return None
 
+# --- Уведомление админа ---
 async def notify_admin(message: types.Message, message_type="запрос"):
-    """Отправляет уведомление админу с кнопкой ответа"""
     user = message.from_user
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton(
@@ -81,27 +78,29 @@ async def notify_admin(message: types.Message, message_type="запрос"):
         f"👤 Имя: {user.full_name}\n"
         f"🔗 Username: @{user.username if user.username else 'нет'}\n"
     )
-    
+
     if message.text:
         caption += f"✉️ Сообщение: {message.text}"
         await bot.send_message(ADMIN_ID, caption, reply_markup=markup)
     elif message.photo:
-        await bot.send_photo(ADMIN_ID, message.photo[-1].file_id, 
-                           caption=caption, reply_markup=markup)
+        await bot.send_photo(ADMIN_ID, message.photo[-1].file_id, caption=caption, reply_markup=markup)
     elif message.document:
-        await bot.send_document(ADMIN_ID, message.document.file_id, 
-                              caption=caption, reply_markup=markup)
+        await bot.send_document(ADMIN_ID, message.document.file_id, caption=caption, reply_markup=markup)
+    elif message.video:
+        await bot.send_video(ADMIN_ID, message.video.file_id, caption=caption, reply_markup=markup)
+    else:
+        await bot.send_message(ADMIN_ID, caption, reply_markup=markup)
 
+# --- Команды ---
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     user = message.from_user
     save_user(user.id, user.username, user.first_name)
     await message.answer(
         "🤖 Бот для заказов из Китая\n\n"
-        "Доступные команды:\n"
-        "Заказать - оформить заказ\n"
-        "'оператор' - связаться с менеджером\n\n"
-        "Задайте вопрос о доставке или заказе!"
+        "Команды:\n"
+        "/buy — оформить заказ\n"
+        "'оператор' — связаться с менеджером"
     )
 
 @dp.message_handler(commands=['buy'])
@@ -110,93 +109,79 @@ async def ask_order(message: types.Message):
     save_user(user.id, user.username, user.first_name)
     waiting_for_order.add(user.id)
     await message.answer(
-        "📝 Оформление заказа\n\n"
-        "Опишите:\n"
+        "📝 Опишите заказ:\n"
         "1. Название товара\n"
         "2. Количество\n"
-        "3. Номер телефона\n\n"
+        "3. Телефон\n\n"
         "Можно прикрепить фото или документ"
     )
 
-@dp.message_handler(Command('broadcast'), user_id=ADMIN_ID)
-async def broadcast(message: types.Message):
-    if not message.reply_to_message:
-        await message.answer("ℹ️ Ответьте /broadcast на сообщение для рассылки")
+# --- Рассылка ---
+@dp.message_handler(commands=['broadcast'])
+async def broadcast_start(message: types.Message):
+    global waiting_for_broadcast
+    if message.from_user.id != ADMIN_ID:
         return
-    
-    users = [uid for uid in active_users if uid in user_data]
-    if not users:
-        await message.answer("❌ Нет пользователей для рассылки")
-        return
-    
-    await message.answer(f"⏳ Рассылка для {len(users)} пользователей...")
-    
-    success = 0
-    for user_id in users:
-        try:
-            await bot.copy_message(
-                chat_id=user_id,
-                from_chat_id=message.chat.id,
-                message_id=message.reply_to_message.message_id
-            )
-            success += 1
-            await asyncio.sleep(0.1)
-        except:
-            continue
-    
-    await message.answer(f"✅ Отправлено: {success}/{len(users)}")
+    waiting_for_broadcast = True
+    await message.answer("📢 Отправьте сообщение (текст/фото/видео/документ) для рассылки.")
 
-@dp.callback_query_handler(lambda c: c.data.startswith('reply_'))
-async def process_reply(callback: types.CallbackQuery):
-    user_id = callback.data.split('_')[1]
-    await callback.message.answer(
-        f"✏️ Ответ для пользователя ID: {user_id}\n"
-        f"Введите текст ответа:"
-    )
-    # Здесь можно сохранить user_id для следующего сообщения
-
-@dp.message_handler(content_types=types.ContentTypes.TEXT)
-async def handle_text(message: types.Message):
+# --- Обработка любых сообщений ---
+@dp.message_handler(content_types=types.ContentTypes.ANY)
+async def handle_message(message: types.Message):
+    global waiting_for_broadcast
     user = message.from_user
     save_user(user.id, user.username, user.first_name)
-    text = message.text.lower()
 
+    # --- РАССЫЛКА ---
+    if waiting_for_broadcast and message.from_user.id == ADMIN_ID:
+        waiting_for_broadcast = False
+        users_list = list(active_users)
+        total = len(users_list)
+        count = 0
+        await message.answer(f"📤 Начинаю рассылку ({total} пользователей)")
+
+        for i in range(0, total, 30):
+            batch = users_list[i:i+30]
+            for user_id in batch:
+                try:
+                    if message.text:
+                        await bot.send_message(user_id, message.text)
+                    elif message.photo:
+                        await bot.send_photo(user_id, message.photo[-1].file_id, caption=message.caption or "")
+                    elif message.video:
+                        await bot.send_video(user_id, message.video.file_id, caption=message.caption or "")
+                    elif message.document:
+                        await bot.send_document(user_id, message.document.file_id, caption=message.caption or "")
+                    count += 1
+                except:
+                    continue
+            await asyncio.sleep(2)
+
+        await message.answer(f"✅ Разослано: {count}/{total}")
+        return
+
+    # --- ОФОРМЛЕНИЕ ЗАКАЗА ---
     if user.id in waiting_for_order:
         await notify_admin(message, "заказ")
         waiting_for_order.remove(user.id)
-        await message.answer("✅ Заказ принят! Ожидайте сообщения от менеджера.")
+        await message.answer("✅ Заказ принят! Менеджер скоро свяжется.")
         return
 
-    if "оператор" in text:
+    # --- ЗАПРОС ОПЕРАТОРА ---
+    if message.text and "оператор" in message.text.lower():
         await notify_admin(message, "запрос оператора")
-        await message.answer("🔄 Вас скоро свяжут с менеджером!")
+        await message.answer("🔄 Менеджер скоро с вами свяжется.")
         return
 
-    answer = find_best_match(text)
-    if answer:
-        await message.answer(answer)
-    else:
-        await message.answer(
-            "❓ Я не нашел ответа на ваш вопрос\n"
-            "Попробуйте спросить о:\n"
-            "- Стоимости доставки\n"
-            "- Сроках доставки\n"
-            "- Как сделать заказ\n\n"
-            "Или напишите 'оператор' для связи"
-        )
+    # --- FAQ ---
+    if message.text:
+        answer = find_best_match(message.text)
+        if answer:
+            await message.answer(answer)
+        else:
+            await message.answer("❓ Не нашел ответа. Напишите 'оператор' для связи.")
 
-@dp.message_handler(content_types=types.ContentTypes.ANY)
-async def handle_media(message: types.Message):
-    user = message.from_user
-    save_user(user.id, user.username, user.first_name)
-
-    if user.id in waiting_for_order:
-        await notify_admin(message, "заказ с медиа")
-        await message.answer("📎 Файл получен. Добавьте текстовое описание если нужно.")
-    else:
-        await message.answer("📤 Пожалуйста, отправьте текстовое сообщение")
-
-# Инициализация
+# --- Запуск ---
 load_users()
 
 async def main():
