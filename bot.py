@@ -54,7 +54,8 @@ async def start(message: types.Message):
 "
                          "/sendtrack — отправить трек
 "
-                         "Если нужен оператор — напиши 'оператор'.")
+                         "Если нужен оператор — напиши 'оператор'."
+                        )
 
 @dp.message_handler(commands=['getcod'])
 async def get_code(message: types.Message):
