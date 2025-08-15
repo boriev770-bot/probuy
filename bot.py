@@ -6,8 +6,8 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.utils import executor
 
-TOKEN = "ВСТАВЬ_СВОЙ_TOKEN"
-ADMIN_ID = ВСТАВЬ_СВОЙ_ID  # ID администратора
+TOKEN = "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI"
+ADMIN_ID = 7095008192  # ID администратора
 WAREHOUSE_ID = ВСТАВЬ_ID_СКЛАДА  # ID сотрудника склада
 
 DATA_FILE = "data.json"
