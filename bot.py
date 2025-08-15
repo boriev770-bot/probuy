@@ -46,17 +46,13 @@ dp = Dispatcher(bot)
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
-    await message.answer("Привет! Напиши свой вопрос или используй команды:
-"
-                         "/getcod — получить личный номер
-"
-                         "/adress — адрес склада
-"
-                         "/sendtrack — отправить трек
-"
-                         "Если нужен оператор — напиши 'оператор'."
-                        )
-
+    await message.answer(
+    "Привет! Напиши свой вопрос или используй команды:\n"
+    "/getcod — получить личный номер\n"
+    "/adress — адрес склада\n"
+    "/sendtrack — отправить трек\n"
+    "Если нужен оператор — напиши 'оператор'."
+)
 @dp.message_handler(commands=['getcod'])
 async def get_code(message: types.Message):
     data = load_data()
