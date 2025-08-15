@@ -164,7 +164,7 @@ async def handle_text(message: types.Message):
     if user.id in waiting_for_order:
         await notify_admin(message, "заказ")
         waiting_for_order.remove(user.id)
-        await message.answer("✅ Заказ принят! Ожидайте звонка менеджера.")
+        await message.answer("✅ Заказ принят! Ожидайте сообщения от менеджера.")
         return
 
     if "оператор" in text:
