@@ -8,10 +8,10 @@ from aiogram.utils import executor
 from datetime import datetime
 
 TOKEN = "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI"
-ADMIN_ID = 7095008192  # Ваш Telegram ID (должен быть числом)
-WAREHOUSE_ID = 7095008192  # Число или строка с ID сотрудника склада
+ADMIN_ID = 7095008192  # Ваш Telegram ID (число)
+WAREHOUSE_ID = 7095008192  # ID сотрудника склада
 
-# Полный адрес склада в Китае (замените на реальный)
+# Полный адрес склада в Китае
 CHINA_WAREHOUSE_ADDRESS = """Китай, г. Гуанчжоу, район Байюнь
 ул. Складская 123, склад 456
 Контактное лицо: Иванов Иван
@@ -156,26 +156,41 @@ async def handle_all_messages(message: types.Message):
         full_name = message.from_user.full_name
         username = f"@{message.from_user.username}" if message.from_user.username else "нет"
         
+        # Получаем текст описания из разных источников
+        order_description = ""
+        if message.caption:  # Текст под фото/файлом
+            order_description = message.caption
+        elif message.text:  # Обычный текст
+            order_description = message.text
+        
         # Формируем сообщение для админа
-        order_text = message.text if message.text else "Описание в прикрепленных файлах"
         admin_message = (
             f"🛍 Новый заказ!\n\n"
             f"👤 Клиент: {full_name}\n"
             f"📎 Username: {username}\n"
             f"🆔 Код: {user_code}\n\n"
-            f"📦 Заказ:\n{order_text}"
+            f"📦 Заказ:\n{order_description if order_description else 'Описание в прикрепленных файлах'}"
         )
         
         try:
-            await bot.send_message(ADMIN_ID, admin_message)
+            # Отправляем текстовую часть
+            sent_message = await bot.send_message(ADMIN_ID, admin_message)
             
             # Отправляем вложения если есть
             if message.photo:
-                await bot.send_photo(ADMIN_ID, message.photo[-1].file_id, 
-                                   caption=f"Фото от {full_name} ({user_code})")
+                await bot.send_photo(
+                    ADMIN_ID, 
+                    message.photo[-1].file_id,
+                    caption=f"Фото от {full_name} ({user_code})",
+                    reply_to_message_id=sent_message.message_id
+                )
             elif message.document:
-                await bot.send_document(ADMIN_ID, message.document.file_id, 
-                                      caption=f"Файл от {full_name} ({user_code})")
+                await bot.send_document(
+                    ADMIN_ID,
+                    message.document.file_id,
+                    caption=f"Файл от {full_name} ({user_code})",
+                    reply_to_message_id=sent_message.message_id
+                )
             
             data[user_id]['state'] = None
             save_data(data)
