@@ -20,21 +20,14 @@ CHINA_WAREHOUSE_ADDRESS = """Китай, г. Гуанчжоу, район Бай
 
 DATA_FILE = "data.json"
 
-DELIVERY_OPTIONS = {
-    "🚗 Быстрое авто": "Быстрая автодоставка (10-15 дней)",
-    "🚛 Медленное авто": "Медленная автодоставка (15-20 дней)",
-    "✈️ Авиа": "Авиадоставка (5-7 дней)",
-    "🚂 ЖД": "Железнодорожная доставка (18-25 дней)"
-}
-
 def load_data():
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, FileNotFoundError):
-            return {}
-    return {}
+    if not os.path.exists(DATA_FILE):
+        return {}
+    try:
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
 
 def save_data(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -45,107 +38,149 @@ dp = Dispatcher(bot)
 
 class UserStates:
     WAITING_FOR_TRACK = "waiting_for_track"
-    WAITING_FOR_DELIVERY = "waiting_for_delivery"
-    WAITING_FOR_ORDER_DETAILS = "waiting_for_order_details"
+    WAITING_FOR_ORDER = "waiting_for_order"
+
+# Генерация кода пользователя
+async def generate_user_code(user_id):
+    data = load_data()
+    if str(user_id) not in data:
+        last_code = max([int(v['code'][2:]) for v in data.values()] or [0])
+        new_code = f"PR{last_code + 1:05d}"
+        data[str(user_id)] = {
+            "code": new_code,
+            "tracks": [],
+            "username": "",
+            "full_name": "",
+            "state": None
+        }
+        save_data(data)
+    return data[str(user_id)]['code']
 
 # Команда /start
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
+    user_code = await generate_user_code(message.from_user.id)
     await message.answer(
-        "Привет! Я бот для работы со сборными грузами из Китая.\n\n"
+        f"Привет! Ваш постоянный личный код: {user_code}\n\n"
         "Доступные команды:\n"
-        "/getcod - получить личный номер\n"
         "/adress - адрес склада в Китае\n"
         "/sendtrack - отправить трек-номер\n"
         "/buy - сделать заказ\n"
-        "/manager - связаться с менеджером\n\n"
-        "Для быстрой связи также можно написать 'оператор'"
+        "/manager - связаться с менеджером"
     )
 
-# Команда /buy - оформление заказа
-@dp.message_handler(commands=['buy'])
-async def start_order(message: types.Message):
+# Команда /adress
+@dp.message_handler(commands=['adress'])
+async def send_address(message: types.Message):
+    user_code = await generate_user_code(message.from_user.id)
+    address = CHINA_WAREHOUSE_ADDRESS.format(user_code=user_code)
+    await message.answer(f"🏭 Адрес склада в Китае:\n\n{address}")
+
+# Команда /sendtrack - упрощенная версия
+@dp.message_handler(commands=['sendtrack'])
+async def send_track(message: types.Message):
+    user_code = await generate_user_code(message.from_user.id)
     data = load_data()
-    user_id = str(message.from_user.id)
-    
-    # Проверяем есть ли у пользователя код
-    if user_id not in data:
-        await message.answer("Сначала получите личный номер через /getcod")
-        return
-    
-    # Устанавливаем состояние ожидания деталей заказа
-    data[user_id]['state'] = UserStates.WAITING_FOR_ORDER_DETAILS
+    data[str(message.from_user.id)]['state'] = UserStates.WAITING_FOR_TRACK
     save_data(data)
-    
     await message.answer(
-        "📦 Оформление заказа\n\n"
-        "Напишите что хотите заказать и в каком количестве?\n"
-        "Можно прикрепить фото или файл с описанием товара.\n\n"
-        "Пример:\n"
-        "Футболки черные, размеры S-5шт, M-3шт, L-2шт\n"
-        "Джинсы синие 2шт\n"
-        "Кроссовки белые 42 размер - 1 пара"
+        f"Отправьте трек-номер для вашего кода {user_code}:\n\n"
+        "Пример: AB123456789CD"
     )
 
-# Обработчик для деталей заказа (текст + файлы)
-@dp.message_handler(content_types=[ContentType.TEXT, ContentType.PHOTO, ContentType.DOCUMENT], 
-                    state=UserStates.WAITING_FOR_ORDER_DETAILS)
-async def process_order_details(message: types.Message):
+# Обработчик трек-номеров
+@dp.message_handler(regexp=r'^[A-Za-z0-9]{10,20}$')
+async def handle_track_number(message: types.Message):
     data = load_data()
     user_id = str(message.from_user.id)
     
-    if user_id not in data or data[user_id].get('state') != UserStates.WAITING_FOR_ORDER_DETAILS:
+    if user_id not in data or data[user_id].get('state') != UserStates.WAITING_FOR_TRACK:
         return
     
-    # Формируем сообщение для админа
-    order_info = f"🛒 Новый заказ!\n\n" \
-                 f"Клиент: {data[user_id]['full_name']}\n" \
-                 f"Код: {data[user_id]['code']}\n" \
-                 f"Username: @{message.from_user.username or 'нет'}\n\n" \
-                 f"Детали заказа:\n{message.text if message.text else 'См. вложения'}"
+    track = message.text.upper()
+    user_code = data[user_id]['code']
     
-    # Отправляем текст заказа
-    await bot.send_message(ADMIN_ID, order_info)
-    
-    # Если есть фото или файл - пересылаем их админу
-    if message.photo:
-        await bot.send_photo(ADMIN_ID, message.photo[-1].file_id, 
-                           caption=f"Фото от {data[user_id]['full_name']}")
-    elif message.document:
-        await bot.send_document(ADMIN_ID, message.document.file_id, 
-                              caption=f"Файл от {data[user_id]['full_name']}")
-    
-    # Сбрасываем состояние
+    # Добавляем трек
+    data[user_id]["tracks"].append({
+        "track": track,
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    })
     data[user_id]['state'] = None
     save_data(data)
     
+    # Отправляем на склад
+    await bot.send_message(
+        WAREHOUSE_ID,
+        f"📦 Новый трек-номер!\n"
+        f"Код клиента: {user_code}\n"
+        f"Трек: {track}\n"
+        f"Всего треков: {len(data[user_id]['tracks'])}"
+    )
+    
+    await message.answer(f"✅ Трек {track} добавлен к вашему коду {user_code}")
+
+# Команда /buy - упрощенная версия
+@dp.message_handler(commands=['buy'])
+async def start_order(message: types.Message):
+    user_code = await generate_user_code(message.from_user.id)
+    data = load_data()
+    data[str(message.from_user.id)]['state'] = UserStates.WAITING_FOR_ORDER
+    save_data(data)
     await message.answer(
-        "✅ Ваш заказ принят! Менеджер свяжется с вами для уточнения деталей.\n\n"
-        "Вы можете сделать еще один заказ через /buy или отправить трек-номер через /sendtrack"
+        f"🛒 Оформление заказа (код: {user_code})\n\n"
+        "Что хотите купить и в каком количестве?\n"
+        "Можно прикрепить фото или файл с описанием.\n\n"
+        "Пример:\n"
+        "Футболки черные: 5 шт\n"
+        "Джинсы синие: 2 шт"
     )
 
-# Команда /manager - связь с менеджером (аналог "оператор")
-@dp.message_handler(commands=['manager'])
-async def contact_manager(message: types.Message):
+# Обработчик заказов
+@dp.message_handler(content_types=[ContentType.TEXT, ContentType.PHOTO, ContentType.DOCUMENT])
+async def handle_order(message: types.Message):
     data = load_data()
     user_id = str(message.from_user.id)
     
-    user_code = data.get(user_id, {}).get('code', 'нет кода')
+    if user_id not in data or data[user_id].get('state') != UserStates.WAITING_FOR_ORDER:
+        return
     
+    user_code = data[user_id]['code']
+    order_text = message.text or "См. вложения"
+    
+    # Формируем сообщение для админа
+    order_msg = f"🛍 Новый заказ!\n\n" \
+                f"Код: {user_code}\n" \
+                f"Клиент: @{message.from_user.username or 'нет'}\n" \
+                f"Заказ:\n{order_text}"
+    
+    await bot.send_message(ADMIN_ID, order_msg)
+    
+    # Пересылаем вложения
+    if message.photo:
+        await bot.send_photo(ADMIN_ID, message.photo[-1].file_id)
+    elif message.document:
+        await bot.send_document(ADMIN_ID, message.document.file_id)
+    
+    data[user_id]['state'] = None
+    save_data(data)
+    
+    await message.answer("✅ Заказ отправлен менеджеру. Ожидайте связи!")
+
+# Команда /manager
+@dp.message_handler(commands=['manager'])
+async def contact_manager(message: types.Message):
+    user_code = await generate_user_code(message.from_user.id)
     await message.answer("Менеджер скоро свяжется с вами.")
     await bot.send_message(
         ADMIN_ID,
-        f"📞 Запрос связи с менеджером!\n"
-        f"Клиент: {message.from_user.full_name}\n"
-        f"Username: @{message.from_user.username or 'нет'}\n"
-        f"Код: {user_code}\n\n"
-        f"Для быстрого ответа: https://t.me/{message.from_user.username}" if message.from_user.username else ""
+        f"📞 Запрос связи (код: {user_code})\n"
+        f"Клиент: @{message.from_user.username or message.from_user.full_name}\n"
+        f"Ссылка: https://t.me/{message.from_user.username}" if message.from_user.username else ""
     )
 
-# ... (остальные обработчики из предыдущего кода остаются без изменений)
-
 if __name__ == "__main__":
+    # Создаем файл данных при первом запуске
     if not os.path.exists(DATA_FILE):
         save_data({})
-        
+    
     executor.start_polling(dp, skip_updates=True)
