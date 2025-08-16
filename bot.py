@@ -5,19 +5,18 @@ import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.utils import executor
+from datetime import datetime
 
 TOKEN = "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI"
-ADMIN_ID = 7095008192  # ID администратора
+ADMIN_ID = 7095008192
 WAREHOUSE_ID = 7095008192  # Замените на реальный ID сотрудника склада
 
-# Здесь укажите полный адрес склада в Китае
-CHINA_WAREHOUSE_ADDRESS = """ВСТАВЬ_ПОЛНЫЙ_АДРЕС_СКЛАДА_В_КИТАЕ
-Например:
-Китай, г. Гуанчжоу, район Байюнь, 
-ул. Складская 123, склад 456, 
+# Адрес склада в Китае (замените на реальный)
+CHINA_WAREHOUSE_ADDRESS = """Китай, г. Гуанчжоу, район Байюнь
+ул. Складская 123, склад 456
 Контактное лицо: Иванов Иван
 Телефон: +86 123 4567 8910
-Ваш код: PR00001 (укажите свой код)"""
+Ваш код: {user_code}"""
 
 DATA_FILE = "data.json"
 
@@ -31,8 +30,11 @@ DELIVERY_OPTIONS = {
 
 def load_data():
     if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            return {}
     return {}
 
 def save_data(data):
@@ -42,6 +44,11 @@ def save_data(data):
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 
+class TrackNumberStates:
+    WAITING_FOR_TRACK = "waiting_for_track"
+    WAITING_FOR_DELIVERY = "waiting_for_delivery"
+
+# Обработчик команды /start
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     await message.answer(
@@ -53,13 +60,13 @@ async def start(message: types.Message):
         "Для связи с оператором напишите 'оператор'"
     )
 
+# Обработчик команды /getcod
 @dp.message_handler(commands=['getcod'])
 async def get_code(message: types.Message):
     data = load_data()
     user_id = str(message.from_user.id)
     
     if user_id not in data:
-        # Генерируем новый код PR00001, PR00002 и т.д.
         last_code = max([int(v['code'][2:]) for v in data.values()] or [0])
         new_code = f"PR{last_code + 1:05d}"
         
@@ -67,7 +74,8 @@ async def get_code(message: types.Message):
             "code": new_code,
             "tracks": [],
             "username": message.from_user.username,
-            "full_name": message.from_user.full_name
+            "full_name": message.from_user.full_name,
+            "state": None
         }
         save_data(data)
         
@@ -79,23 +87,24 @@ async def get_code(message: types.Message):
     else:
         await message.answer(f"Ваш личный номер: {data[user_id]['code']}")
 
+# Обработчик команды /adress
 @dp.message_handler(commands=['adress'])
 async def send_address(message: types.Message):
     data = load_data()
     user_id = str(message.from_user.id)
     
     if user_id in data:
-        personal_code = data[user_id]['code']
-        address_with_code = CHINA_WAREHOUSE_ADDRESS.replace("PR00001", personal_code)
+        address = CHINA_WAREHOUSE_ADDRESS.format(user_code=data[user_id]['code'])
     else:
-        address_with_code = CHINA_WAREHOUSE_ADDRESS
+        address = CHINA_WAREHOUSE_ADDRESS.format(user_code="PR00000 (получите код через /getcod)")
     
     await message.answer(
-        f"🏭 Адрес склада в Китае:\n\n{address_with_code}\n\n"
+        f"🏭 Адрес склада в Китае:\n\n{address}\n\n"
         "Указывайте этот адрес при заказе товаров.\n"
         "Не забудьте указать ваш личный код!"
     )
 
+# Обработчик команды /sendtrack
 @dp.message_handler(commands=['sendtrack'])
 async def send_track(message: types.Message):
     data = load_data()
@@ -105,6 +114,10 @@ async def send_track(message: types.Message):
         await message.answer("Сначала получите личный номер через /getcod")
         return
     
+    # Устанавливаем состояние ожидания выбора доставки
+    data[user_id]['state'] = TrackNumberStates.WAITING_FOR_DELIVERY
+    save_data(data)
+    
     # Создаем клавиатуру с вариантами доставки
     kb = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     buttons = [KeyboardButton(option) for option in DELIVERY_OPTIONS.keys()]
@@ -112,15 +125,69 @@ async def send_track(message: types.Message):
     
     await message.answer("Выберите способ доставки из Китая:", reply_markup=kb)
 
+# Обработчик выбора способа доставки
 @dp.message_handler(lambda m: m.text in DELIVERY_OPTIONS.keys())
 async def process_delivery_choice(message: types.Message):
-    dp.delivery_choice = message.text
+    data = load_data()
+    user_id = str(message.from_user.id)
+    
+    if user_id not in data:
+        await message.answer("Сначала получите личный номер через /getcod")
+        return
+    
+    # Сохраняем выбранный способ доставки
+    data[user_id]['delivery_choice'] = message.text
+    data[user_id]['state'] = TrackNumberStates.WAITING_FOR_TRACK
+    save_data(data)
+    
     await message.answer(
         f"Вы выбрали: {DELIVERY_OPTIONS[message.text]}\n\n"
         "Теперь отправьте трек-номер посылки:",
         reply_markup=types.ReplyKeyboardRemove()
     )
 
+# Обработчик трек-номеров
+@dp.message_handler(regexp=r'^[A-Za-z0-9]{10,20}$')  # Регулярка для трек-номеров
+async def handle_track_number(message: types.Message):
+    data = load_data()
+    user_id = str(message.from_user.id)
+    
+    if user_id not in data:
+        await message.answer("Сначала получите личный номер через /getcod")
+        return
+    
+    if data[user_id].get('state') != TrackNumberStates.WAITING_FOR_TRACK:
+        return
+    
+    track = message.text.upper().strip()
+    
+    # Добавляем трек в базу
+    data[user_id]["tracks"].append({
+        "track": track,
+        "delivery": data[user_id]['delivery_choice'],
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    })
+    data[user_id]['state'] = None
+    save_data(data)
+    
+    # Отправляем уведомление на склад
+    await bot.send_message(
+        WAREHOUSE_ID,
+        f"📦 Новый трек-номер!\n"
+        f"Клиент: {data[user_id]['full_name']}\n"
+        f"Код: {data[user_id]['code']}\n"
+        f"Трек: {track}\n"
+        f"Способ доставки: {DELIVERY_OPTIONS[data[user_id]['delivery_choice']]}\n"
+        f"Всего треков у клиента: {len(data[user_id]['tracks'])}"
+    )
+    
+    await message.answer(
+        f"✅ Трек-номер {track} успешно добавлен!\n"
+        f"Способ доставки: {DELIVERY_OPTIONS[data[user_id]['delivery_choice']]}\n\n"
+        f"Вы можете добавить еще трек-номер командой /sendtrack"
+    )
+
+# Обработчик текстовых сообщений
 @dp.message_handler(content_types=types.ContentTypes.TEXT)
 async def handle_text(message: types.Message):
     text = message.text.lower()
@@ -140,50 +207,14 @@ async def handle_text(message: types.Message):
         )
         return
     
-    # Обработка трек-номеров
-    if hasattr(dp, "delivery_choice"):
-        if user_id not in data:
-            await message.answer("Сначала получите личный номер через /getcod")
-            return
-            
-        track = message.text.upper().strip()
-        
-        # Проверка формата трек-номера (базовая)
-        if not re.match(r"^[A-Z0-9]{10,20}$", track):
-            await message.answer("❌ Неверный формат трек-номера. Попробуйте еще раз.")
-            return
-            
-        # Добавляем трек в базу
-        data[user_id]["tracks"].append({
-            "track": track,
-            "delivery": dp.delivery_choice,
-            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        })
-        save_data(data)
-        
-        # Отправляем уведомление на склад
-        await bot.send_message(
-            WAREHOUSE_ID,
-            f"📦 Новый трек-номер!\n"
-            f"Клиент: {data[user_id]['full_name']}\n"
-            f"Код: {data[user_id]['code']}\n"
-            f"Трек: {track}\n"
-            f"Способ доставки: {DELIVERY_OPTIONS[dp.delivery_choice]}\n"
-            f"Всего треков у клиента: {len(data[user_id]['tracks'])}"
-        )
-        
-        await message.answer(
-            f"✅ Трек-номер {track} успешно добавлен!\n"
-            f"Способ доставки: {DELIVERY_OPTIONS[dp.delivery_choice]}\n\n"
-            f"Вы можете добавить еще трек-номер командой /sendtrack"
-        )
-        del dp.delivery_choice
+    # Если состояние ожидания трека, но сообщение не прошло regexp
+    if user_id in data and data[user_id].get('state') == TrackNumberStates.WAITING_FOR_TRACK:
+        await message.answer("❌ Неверный формат трек-номера. Попробуйте еще раз.")
         return
     
     await message.answer("Не понял ваш запрос. Используйте команды или напишите 'оператор'.")
 
 if __name__ == "__main__":
-    # Создаем файл данных, если его нет
     if not os.path.exists(DATA_FILE):
         save_data({})
         
