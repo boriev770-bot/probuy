@@ -8,10 +8,10 @@ from aiogram.utils import executor
 from datetime import datetime
 
 TOKEN = "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI"
-ADMIN_ID = 7095008192
-WAREHOUSE_ID = 7095008192  # Замените на реальный ID сотрудника склада
+ADMIN_ID = 7095008192  # Ваш Telegram ID (должен быть числом)
+WAREHOUSE_ID = 7095008192  # Число или строка с ID сотрудника склада
 
-# Адрес склада в Китае (полностью замените на ваш реальный адрес)
+# Полный адрес склада в Китае (замените на реальный)
 CHINA_WAREHOUSE_ADDRESS = """Китай, г. Гуанчжоу, район Байюнь
 ул. Складская 123, склад 456
 Контактное лицо: Иванов Иван
@@ -128,7 +128,13 @@ async def handle_track_number(message: types.Message):
 async def start_order(message: types.Message):
     user_code = await generate_user_code(message.from_user.id)
     data = load_data()
-    data[str(message.from_user.id)]['state'] = UserStates.WAITING_FOR_ORDER
+    data[str(message.from_user.id)] = {
+        "code": user_code,
+        "tracks": data.get(str(message.from_user.id), {}).get("tracks", []),
+        "username": message.from_user.username,
+        "full_name": message.from_user.full_name,
+        "state": UserStates.WAITING_FOR_ORDER
+    }
     save_data(data)
     await message.answer(
         f"🛒 Оформление заказа (код: {user_code})\n\n"
@@ -140,61 +146,70 @@ async def start_order(message: types.Message):
     )
 
 @dp.message_handler(content_types=[ContentType.TEXT, ContentType.PHOTO, ContentType.DOCUMENT])
-async def handle_order(message: types.Message):
+async def handle_all_messages(message: types.Message):
     data = load_data()
     user_id = str(message.from_user.id)
     
-    if user_id not in data or data[user_id].get('state') != UserStates.WAITING_FOR_ORDER:
+    # Обработка заказов
+    if user_id in data and data[user_id].get('state') == UserStates.WAITING_FOR_ORDER:
+        user_code = data[user_id]['code']
+        full_name = message.from_user.full_name
+        username = f"@{message.from_user.username}" if message.from_user.username else "нет"
+        
+        # Формируем сообщение для админа
+        order_text = message.text if message.text else "Описание в прикрепленных файлах"
+        admin_message = (
+            f"🛍 Новый заказ!\n\n"
+            f"👤 Клиент: {full_name}\n"
+            f"📎 Username: {username}\n"
+            f"🆔 Код: {user_code}\n\n"
+            f"📦 Заказ:\n{order_text}"
+        )
+        
+        try:
+            await bot.send_message(ADMIN_ID, admin_message)
+            
+            # Отправляем вложения если есть
+            if message.photo:
+                await bot.send_photo(ADMIN_ID, message.photo[-1].file_id, 
+                                   caption=f"Фото от {full_name} ({user_code})")
+            elif message.document:
+                await bot.send_document(ADMIN_ID, message.document.file_id, 
+                                      caption=f"Файл от {full_name} ({user_code})")
+            
+            data[user_id]['state'] = None
+            save_data(data)
+            await message.answer("✅ Заказ отправлен менеджеру. Ожидайте связи!")
+        except Exception as e:
+            print(f"Ошибка отправки сообщения админу: {e}")
+            await message.answer("❌ Произошла ошибка при отправке заказа. Попробуйте позже.")
         return
     
-    user_code = data[user_id]['code']
-    full_name = message.from_user.full_name
-    username = f"@{message.from_user.username}" if message.from_user.username else "нет"
-    order_text = message.text if message.text else "Описание в прикрепленных файлах"
+    # Обработка команды "оператор"
+    if message.text and message.text.lower() == "оператор":
+        await contact_manager(message)
+        return
     
-    order_msg = (
-        f"🛍 Новый заказ!\n\n"
-        f"👤 Клиент: {full_name}\n"
-        f"📎 Username: {username}\n"
-        f"🆔 Код: {user_code}\n\n"
-        f"📦 Заказ:\n{order_text}"
-    )
-    
-    await bot.send_message(ADMIN_ID, order_msg)
-    
-    if message.photo:
-        await bot.send_photo(
-            ADMIN_ID, 
-            message.photo[-1].file_id,
-            caption=f"Фото от {full_name} ({user_code})"
-        )
-    elif message.document:
-        await bot.send_document(
-            ADMIN_ID,
-            message.document.file_id,
-            caption=f"Файл от {full_name} ({user_code})"
-        )
-    
-    data[user_id]['state'] = None
-    save_data(data)
-    
-    await message.answer("✅ Заказ отправлен менеджеру. Ожидайте связи!")
+    # Если не распознано - отправляем подсказку
+    await message.answer("Не понял ваш запрос. Используйте команды или напишите 'оператор'.")
 
-@dp.message_handler(commands=['manager'])
 async def contact_manager(message: types.Message):
     user_code = await generate_user_code(message.from_user.id)
     full_name = message.from_user.full_name
     username = f"@{message.from_user.username}" if message.from_user.username else "нет"
     
     await message.answer("Менеджер скоро свяжется с вами.")
-    await bot.send_message(
-        ADMIN_ID,
-        f"📞 Запрос связи с менеджером!\n\n"
-        f"👤 Клиент: {full_name}\n"
-        f"📎 Username: {username}\n"
-        f"🆔 Код: {user_code}\n\n"
-        f"Для быстрого ответа: https://t.me/{message.from_user.username}" if message.from_user.username else ""
-    )
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"📞 Запрос связи с менеджером!\n\n"
+            f"👤 Клиент: {full_name}\n"
+            f"📎 Username: {username}\n"
+            f"🆔 Код: {user_code}\n\n"
+            f"Для быстрого ответа: https://t.me/{message.from_user.username}" if message.from_user.username else ""
+        )
+    except Exception as e:
+        print(f"Ошибка отправки сообщения админу: {e}")
 
 if __name__ == "__main__":
     if not os.path.exists(DATA_FILE):
