@@ -8,7 +8,7 @@ from aiogram.utils import executor
 
 TOKEN = "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI"
 ADMIN_ID = 7095008192  # ID администратора
-WAREHOUSE_ID = "ВСТАВЬ_ID_СКЛАДА"  # ID сотрудника склада (изменено на строку)
+WAREHOUSE_ID = "7095008192"  # ID сотрудника склада (изменено на строку)
 
 DATA_FILE = "data.json"
 
@@ -54,7 +54,7 @@ async def start(message: types.Message):
         "Если нужен оператор — напиши 'оператор'."
     )
 
-@dp.message_handler(commands=['getcod'])
+@dp.message_handler(commands=['/getcod'])
 async def get_code(message: types.Message):
     data = load_data()
     user_id = str(message.from_user.id)
