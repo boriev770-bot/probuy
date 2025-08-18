@@ -8,8 +8,8 @@ from aiogram.utils import executor
 from datetime import datetime
 
 TOKEN = "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI"
-ADMIN_ID = 7095008192  # Ваш Telegram ID (число)
-WAREHOUSE_ID = 7095008192  # ID сотрудника склада (число)
+ADMIN_ID = 7095008192
+WAREHOUSE_ID = 7095008192  # Замените на реальный ID склада
 
 # Адрес склада в Китае
 CHINA_WAREHOUSE_ADDRESS = """Китай, г. Гуанчжоу, район Байюнь
@@ -31,11 +31,8 @@ def load_data():
         return {}
 
 def save_data(data):
-    try:
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"Ошибка сохранения данных: {e}")
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
@@ -44,7 +41,7 @@ class UserStates:
     WAITING_FOR_TRACK = "waiting_for_track"
     WAITING_FOR_ORDER = "waiting_for_order"
 
-async def generate_user_code(user_id):
+async def generate_user_code(user_id, message=None):
     data = load_data()
     user_id = str(user_id)
     if user_id not in data:
@@ -53,8 +50,8 @@ async def generate_user_code(user_id):
         data[user_id] = {
             "code": new_code,
             "tracks": [],
-            "username": message.from_user.username if 'message' in locals() else "",
-            "full_name": message.from_user.full_name if 'message' in locals() else "",
+            "username": message.from_user.username if message else "",
+            "full_name": message.from_user.full_name if message else "",
             "state": None
         }
         save_data(data)
@@ -62,54 +59,104 @@ async def generate_user_code(user_id):
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
-    user_code = await generate_user_code(message.from_user.id)
+    user_code = await generate_user_code(message.from_user.id, message)
     await message.answer(
         f"Привет! Я бот для работы со сборными грузами из Китая.\n\n"
         f"🔑 Ваш личный код: {user_code}\n\n"
         "Доступные команды:\n"
         "/mycod - показать личный код\n"
-        "/mytracks - показать все треки\n"
+        "/mytracks - показать треки\n"
         "/adress - адрес склада\n"
         "/sendtrack - отправить трек\n"
         "/buy - сделать заказ\n"
-        "/manager - связаться с менеджером\n\n"
-        "Для быстрой связи также можно написать 'оператор'"
+        "/manager - связаться с менеджером"
     )
 
-@dp.message_handler(commands=['manager'])
-async def contact_manager(message: types.Message):
+@dp.message_handler(commands=['mycod'])
+async def show_my_code(message: types.Message):
     try:
-        user_code = await generate_user_code(message.from_user.id)
-        full_name = message.from_user.full_name
-        username = f"@{message.from_user.username}" if message.from_user.username else "нет"
+        data = load_data()
+        user_id = str(message.from_user.id)
         
-        # Уведомление пользователю
-        await message.answer("✅ Ваш запрос передан менеджеру. Ожидайте ответа в ближайшее время.")
+        if user_id not in data:
+            user_code = await generate_user_code(message.from_user.id, message)
+        else:
+            user_code = data[user_id]['code']
         
-        # Уведомление админу
-        manager_message = (
-            f"📞 ЗАПРОС СВЯЗИ С МЕНЕДЖЕРОМ\n\n"
-            f"👤 Клиент: {full_name}\n"
-            f"🆔 Код: {user_code}\n"
-            f"📎 Username: {username}\n\n"
-            f"Для быстрого ответа: https://t.me/{message.from_user.username}" 
-            if message.from_user.username else ""
+        await message.answer(
+            f"🔑 Ваш личный код: {user_code}\n\n"
+            f"Используйте его при заказе товаров.\n"
+            f"Адрес склада: /adress"
         )
+    except Exception as e:
+        print(f"Ошибка в /mycod: {e}")
+        await message.answer("⚠ Произошла ошибка при получении кода")
+
+@dp.message_handler(commands=['sendtrack'])
+async def send_track(message: types.Message):
+    try:
+        data = load_data()
+        user_id = str(message.from_user.id)
         
+        if user_id not in data:
+            user_code = await generate_user_code(message.from_user.id, message)
+        else:
+            user_code = data[user_id]['code']
+        
+        data[user_id]['state'] = UserStates.WAITING_FOR_TRACK
+        save_data(data)
+        
+        await message.answer(
+            f"Отправьте трек-номер для кода {user_code}:\n\n"
+            "Формат: буквы и цифры (10-20 символов)\n"
+            "Пример: AB123456789CD"
+        )
+    except Exception as e:
+        print(f"Ошибка в /sendtrack: {e}")
+        await message.answer("⚠ Ошибка при обработке команды")
+
+@dp.message_handler(regexp=r'^[A-Za-z0-9]{10,20}$')
+async def handle_track_number(message: types.Message):
+    try:
+        data = load_data()
+        user_id = str(message.from_user.id)
+        
+        if user_id not in data or data[user_id].get('state') != UserStates.WAITING_FOR_TRACK:
+            return
+        
+        track = message.text.upper()
+        user_code = data[user_id]['code']
+        
+        # Инициализация списка треков если нужно
+        if 'tracks' not in data[user_id]:
+            data[user_id]['tracks'] = []
+        
+        # Добавляем трек
+        data[user_id]['tracks'].append({
+            "track": track,
+            "date": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+        
+        # Отправка на склад
         await bot.send_message(
-            chat_id=ADMIN_ID,
-            text=manager_message
+            WAREHOUSE_ID,
+            f"📦 Новый трек-номер\n\n"
+            f"Код: {user_code}\n"
+            f"Трек: {track}\n"
+            f"Всего треков: {len(data[user_id]['tracks'])}"
         )
+        
+        await message.answer(f"✅ Трек {track} добавлен к вашему коду {user_code}")
+        
+        # Сбрасываем состояние и сохраняем
+        data[user_id]['state'] = None
+        save_data(data)
         
     except Exception as e:
-        print(f"Ошибка в команде /manager: {e}")
-        await message.answer("⚠ Произошла ошибка при отправке запроса. Попробуйте позже.")
+        print(f"Ошибка обработки трека: {e}")
+        await message.answer("⚠ Ошибка при обработке трек-номера")
 
-# ... (остальные функции из предыдущего кода остаются без изменений)
-
-@dp.message_handler(lambda message: message.text.lower() == 'оператор')
-async def handle_operator_request(message: types.Message):
-    await contact_manager(message)
+# ... (остальные обработчики из предыдущего кода)
 
 if __name__ == "__main__":
     if not os.path.exists(DATA_FILE):
