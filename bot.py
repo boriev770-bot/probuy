@@ -9,7 +9,7 @@ from datetime import datetime
 
 TOKEN = "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI"
 ADMIN_ID = 7095008192  # Ваш Telegram ID
-WAREHOUSE_ID = 123456789  # ID сотрудника склада (число)
+WAREHOUSE_ID = 7095008192  # ID сотрудника склада (число)
 
 # Адрес склада в Китае
 CHINA_WAREHOUSE_ADDRESS = """Китай, г. Гуанчжоу, район Байюнь
