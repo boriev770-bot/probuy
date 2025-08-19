@@ -71,7 +71,8 @@ async def adress(message: types.Message):
 @dp.message_handler(commands=["sendtrack"])
 async def send_track(message: types.Message):
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add(KeyboardButton("Быстрое авто"), KeyboardButton("Медленное авто"))
+    kb.add(KeyboardButton("Быстрое авто"), KeyboardButton("Медленное авто"
+    kb.add(KeyboardButton("Авиа"), KeyboardButton("ЖД")))
     await message.answer("Выберите способ доставки:", reply_markup=kb)
 
 @dp.message_handler(lambda msg: msg.text in ["Быстрое авто", "Медленное авто"])
