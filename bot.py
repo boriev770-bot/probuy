@@ -130,5 +130,5 @@ f"Клиент: {db['users'][user_id]['code']}\n"
     else:
         await message.answer("Извини, я не нашёл ответа. Напишите 'оператор' или /manager.")
 
-if name == "__main__":
+if __name__ == "__main__":
     asyncio.run(dp.start_polling())
