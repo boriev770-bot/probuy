@@ -8,8 +8,8 @@ from aiogram.utils import executor
 from datetime import datetime
 
 TOKEN = "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI"
-ADMIN_ID = 7095008192
-WAREHOUSE_ID = 7095008192  # Замените на реальный ID склада
+ADMIN_ID = 7095008192  # Ваш Telegram ID (число)
+WAREHOUSE_ID = 7095008192  # ID сотрудника склада (число)
 
 # Адрес склада в Китае
 CHINA_WAREHOUSE_ADDRESS = """Китай, г. Гуанчжоу, район Байюнь
@@ -21,22 +21,18 @@ CHINA_WAREHOUSE_ADDRESS = """Китай, г. Гуанчжоу, район Бай
 DATA_FILE = "data.json"
 
 def load_data():
-    """Загружает данные из файла, создает новый файл если не существует"""
     if not os.path.exists(DATA_FILE):
-        with open(DATA_FILE, 'w') as f:
-            json.dump({}, f)
         return {}
     try:
-        with open(DATA_FILE, 'r', encoding='utf-8') as f:
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
         print(f"Ошибка загрузки данных: {e}")
         return {}
 
 def save_data(data):
-    """Сохраняет данные в файл"""
     try:
-        with open(DATA_FILE, 'w', encoding='utf-8') as f:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"Ошибка сохранения данных: {e}")
@@ -49,7 +45,6 @@ class UserStates:
     WAITING_FOR_ORDER = "waiting_for_order"
 
 async def generate_user_code(user_id, message=None):
-    """Генерирует или возвращает существующий код пользователя"""
     data = load_data()
     user_id = str(user_id)
     if user_id not in data:
@@ -67,7 +62,6 @@ async def generate_user_code(user_id, message=None):
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
-    """Обработчик команды /start"""
     user_code = await generate_user_code(message.from_user.id, message)
     await message.answer(
         f"Привет! Я бот для работы со сборными грузами из Китая.\n\n"
@@ -75,132 +69,140 @@ async def start(message: types.Message):
         "Доступные команды:\n"
         "/mycod - показать личный код\n"
         "/mytracks - показать все треки\n"
-        "/adress - адрес склада\n"
+        "/adress - адрес склада в Китае\n"
         "/sendtrack - отправить трек-номер\n"
         "/buy - сделать заказ\n"
         "/manager - связаться с менеджером"
     )
 
-@dp.message_handler(commands=['mycod'])
-async def show_my_code(message: types.Message):
-    """Показывает пользователю его код"""
+@dp.message_handler(commands=['adress'])
+async def send_address(message: types.Message):
     try:
         user_code = await generate_user_code(message.from_user.id, message)
+        address = CHINA_WAREHOUSE_ADDRESS.format(user_code=user_code)
         await message.answer(
-            f"🔑 Ваш постоянный личный код: {user_code}\n\n"
-            f"Используйте его при всех операциях.\n"
-            f"Адрес склада: /adress"
+            f"🏭 Адрес нашего склада в Китае:\n\n{address}\n\n"
+            f"Указывайте этот адрес при заказе товаров вместе с вашим кодом: {user_code}"
         )
     except Exception as e:
-        print(f"Ошибка в /mycod: {e}")
-        await message.answer("⚠ Произошла ошибка при получении кода")
+        print(f"Ошибка в /adress: {e}")
+        await message.answer("⚠ Произошла ошибка при получении адреса")
 
-@dp.message_handler(commands=['mytracks'])
-async def show_my_tracks(message: types.Message):
-    """Показывает все треки пользователя"""
+@dp.message_handler(commands=['buy'])
+async def start_order(message: types.Message):
     try:
+        user_code = await generate_user_code(message.from_user.id, message)
         data = load_data()
         user_id = str(message.from_user.id)
         
-        if user_id not in data or not data[user_id].get('tracks'):
-            await message.answer("У вас пока нет зарегистрированных трек-номеров.")
-            return
-            
-        tracks = data[user_id]['tracks']
-        tracks_list = "\n".join(
-            f"{i+1}. {t['track']} ({t['date']})" 
-            for i, t in enumerate(tracks)
-        )
-        
-        await message.answer(
-            f"📦 Ваши трек-номера (всего {len(tracks)}):\n\n"
-            f"{tracks_list}"
-        )
-    except Exception as e:
-        print(f"Ошибка в /mytracks: {e}")
-        await message.answer("⚠ Произошла ошибка при получении списка треков")
-
-@dp.message_handler(commands=['sendtrack'])
-async def send_track(message: types.Message):
-    """Начинает процесс добавления трек-номера"""
-    try:
-        data = load_data()
-        user_id = str(message.from_user.id)
-        user_code = await generate_user_code(user_id, message)
-        
-        data[user_id]['state'] = UserStates.WAITING_FOR_TRACK
+        data[user_id] = {
+            "code": user_code,
+            "tracks": data.get(user_id, {}).get("tracks", []),
+            "username": message.from_user.username,
+            "full_name": message.from_user.full_name,
+            "state": UserStates.WAITING_FOR_ORDER
+        }
         save_data(data)
         
         await message.answer(
-            f"Отправьте трек-номер для вашего кода {user_code}:\n\n"
-            "Формат: буквы и цифры (10-20 символов)\n"
-            "Пример: AB123456789CD"
+            f"🛒 Оформление заказа (код: {user_code})\n\n"
+            "Отправьте список товаров, которые хотите заказать:\n"
+            "- Название товара\n"
+            "- Количество\n"
+            "- Ссылку на товар (если есть)\n\n"
+            "Можно прикрепить фото или файл с описанием."
         )
     except Exception as e:
-        print(f"Ошибка в /sendtrack: {e}")
-        await message.answer("⚠ Ошибка при обработке команды")
+        print(f"Ошибка в /buy: {e}")
+        await message.answer("⚠ Произошла ошибка при оформлении заказа")
 
-@dp.message_handler(regexp=r'^[A-Za-z0-9]{10,20}$')
-async def handle_track_number(message: types.Message):
-    """Обрабатывает введенный трек-номер"""
+@dp.message_handler(content_types=[ContentType.TEXT, ContentType.PHOTO, ContentType.DOCUMENT])
+async def handle_order_details(message: types.Message):
     try:
         data = load_data()
         user_id = str(message.from_user.id)
         
-        if user_id not in data or data[user_id].get('state') != UserStates.WAITING_FOR_TRACK:
+        if user_id not in data or data[user_id].get('state') != UserStates.WAITING_FOR_ORDER:
             return
         
-        track = message.text.upper()
         user_code = data[user_id]['code']
-        full_name = data[user_id].get('full_name', 'Неизвестный клиент')
+        full_name = data[user_id]['full_name']
+        username = f"@{data[user_id]['username']}" if data[user_id]['username'] else "нет"
         
-        # Добавляем новый трек
-        new_track = {
-            "track": track,
-            "date": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
-        data[user_id]['tracks'].append(new_track)
-        track_count = len(data[user_id]['tracks'])
+        # Получаем описание заказа
+        if message.text:
+            order_text = message.text
+        elif message.caption:
+            order_text = message.caption
+        else:
+            order_text = "Описание в прикрепленных файлах"
         
-        # Формируем список всех треков
-        tracks_history = "\n".join(
-            f"{i+1}. {t['track']}" 
-            for i, t in enumerate(data[user_id]['tracks'])
-        )
-        
-        # Отправляем уведомление на склад
+        # Отправляем заказ админу
         await bot.send_message(
-            WAREHOUSE_ID,
-            f"📦 Поступил новый трек-номер\n\n"
+            ADMIN_ID,
+            f"🛍 НОВЫЙ ЗАКАЗ\n\n"
             f"👤 Клиент: {full_name}\n"
-            f"🆔 Код: {user_code}\n"
-            f"📮 Новый трек: {track}\n"
-            f"📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
-            f"🔢 Всего треков: {track_count}\n\n"
-            f"📋 История треков:\n{tracks_history}"
+            f"📎 Username: {username}\n"
+            f"🆔 Код: {user_code}\n\n"
+            f"📦 Заказ:\n{order_text}"
         )
         
-        # Отправляем подтверждение пользователю с историей
+        # Отправляем вложения если есть
+        if message.photo:
+            await bot.send_photo(
+                ADMIN_ID,
+                message.photo[-1].file_id,
+                caption=f"Фото к заказу {user_code}"
+            )
+        elif message.document:
+            await bot.send_document(
+                ADMIN_ID,
+                message.document.file_id,
+                caption=f"Файл к заказу {user_code}"
+            )
+        
+        # Подтверждение пользователю
         await message.answer(
-            f"✅ Трек-номер {track} успешно добавлен!\n\n"
-            f"Ваш код: {user_code}\n"
-            f"Всего треков: {track_count}\n\n"
-            f"📋 Ваши трек-номера:\n{tracks_history}\n\n"
-            f"Для просмотра в любое время: /mytracks"
+            "✅ Ваш заказ получен! Менеджер свяжется с вами для уточнения деталей.\n\n"
+            f"Ваш код заказа: {user_code}"
         )
         
-        # Сбрасываем состояние и сохраняем
+        # Сбрасываем состояние
         data[user_id]['state'] = None
         save_data(data)
         
     except Exception as e:
-        print(f"Ошибка обработки трека: {e}")
-        await message.answer("⚠ Произошла ошибка при обработке трек-номера")
+        print(f"Ошибка обработки заказа: {e}")
+        await message.answer("⚠ Произошла ошибка при обработке заказа")
 
-# ... (остальные обработчики из предыдущего кода)
+@dp.message_handler(commands=['manager'])
+async def contact_manager(message: types.Message):
+    try:
+        user_code = await generate_user_code(message.from_user.id, message)
+        full_name = message.from_user.full_name
+        username = f"@{message.from_user.username}" if message.from_user.username else "нет"
+        
+        await message.answer(
+            "✅ Ваш запрос передан менеджеру. Ожидайте ответа в ближайшее время.\n\n"
+            f"Ваш код: {user_code}"
+        )
+        
+        await bot.send_message(
+            ADMIN_ID,
+            f"📞 ЗАПРОС СВЯЗИ С МЕНЕДЖЕРОМ\n\n"
+            f"👤 Клиент: {full_name}\n"
+            f"📎 Username: {username}\n"
+            f"🆔 Код: {user_code}\n\n"
+            f"Для быстрого ответа: https://t.me/{message.from_user.username}"
+            if message.from_user.username else ""
+        )
+    except Exception as e:
+        print(f"Ошибка в /manager: {e}")
+        await message.answer("⚠ Произошла ошибка при отправке запроса")
+
+# ... (другие обработчики из предыдущего кода остаются без изменений)
 
 if __name__ == "__main__":
-    # Создаем файл данных если не существует
     if not os.path.exists(DATA_FILE):
         save_data({})
     
