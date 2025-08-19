@@ -12,7 +12,7 @@ TOKEN = os.getenv("BOT_TOKEN")  # <-- на Railway укажешь перемен
 WAREHOUSE_CHAT_ID = os.getenv("WAREHOUSE_CHAT_ID")  # <-- ID чата сотрудника склада
 
 bot = Bot("7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI")
-dp = Dispatcher(7095008192)
+dp = Dispatcher()
 
 # FSM состояния
 class TrackForm(StatesGroup):
