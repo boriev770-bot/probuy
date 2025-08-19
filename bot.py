@@ -5,7 +5,7 @@ import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
-TOKEN = 7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI
+TOKEN = "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI"
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7095008192"))
 WAREHOUSE_ID = int(os.getenv("WAREHOUSE_ID", "7095008192"))
 
