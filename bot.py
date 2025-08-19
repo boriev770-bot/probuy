@@ -11,7 +11,7 @@ from database import init_db, add_user, get_user_code, add_track, get_tracks
 TOKEN = os.getenv("BOT_TOKEN")  # <-- на Railway укажешь переменную BOT_TOKEN
 WAREHOUSE_CHAT_ID = os.getenv("WAREHOUSE_CHAT_ID")  # <-- ID чата сотрудника склада
 
-bot = Bot(token=7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI)
+bot = Bot("token=7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI")
 dp = Dispatcher(7095008192)
 
 # FSM состояния
