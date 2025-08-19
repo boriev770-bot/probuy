@@ -71,7 +71,7 @@ async def adress(message: types.Message):
 @dp.message_handler(commands=["sendtrack"])
 async def send_track(message: types.Message):
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add(KeyboardButton("Быстрое авто"), KeyboardButton("Медленное авто"
+    kb.add(KeyboardButton("Быстрое авто"), KeyboardButton("Медленное авто")
     kb.add(KeyboardButton("Авиа"), KeyboardButton("ЖД")))
     await message.answer("Выберите способ доставки:", reply_markup=kb)
 
@@ -122,7 +122,7 @@ f"Клиент: {db['users'][user_id]['code']}\n"
 
         tracks = db["users"][user_id]["tracks"]
         history = "\\n".join([f"{t['track']} ({t['delivery']})" for t in tracks])
-        await message.answer(f"Ваш трек сохранён!\\nИстория ваших треков:\\n{history}")
+        await message.answer(f"Ваш трек сохранён!\nИстория ваших треков:\n{history}")
         return
 
     response = find_best_match(text)
