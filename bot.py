@@ -3,156 +3,133 @@ import re
 import json
 import asyncio
 from aiogram import Bot, Dispatcher, types
-from aiogram.utils import executor
-from datetime import datetime
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
-# Настройки
-TOKEN = "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI"
-ADMIN_ID = 7095008192  # Ваш Telegram ID
-WAREHOUSE_ID = 7095008192  # ID чата склада
-DATA_FILE = "data.json"
+TOKEN = os.getenv("7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI
+")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "7095008192"))
+WAREHOUSE_ID = int(os.getenv("WAREHOUSE_ID", "7095008192"))
 
-# Адрес склада
-CHINA_WAREHOUSE_ADDRESS = """Китай, г. Гуанчжоу, район Байюнь
-ул. Складская 123, склад 456
-Контакт: Иванов Иван
-Тел: +86 123 4567 8910
-Ваш код: {user_code}"""
+DB_FILE = "data.json"
 
-# Инициализация бота
+# Загружаем базу
+if os.path.exists(DB_FILE):
+    with open(DB_FILE, "r") as f:
+        db = json.load(f)
+else:
+    db = {"users": {}, "last_code": 0}
+
+def save_db():
+    with open(DB_FILE, "w") as f:
+        json.dump(db, f, indent=2, ensure_ascii=False)
+
+def generate_client_code():
+    db["last_code"] += 1
+    return f"PR{db['last_code']:05d}"
+
+FAQ = {
+    r"(сдела.*|заказ.*)": "Для заказа напишите слово 'оператор' или используйте /manager.",
+    r"(сколь.*|стои.*|доставк.*цена.*|цена.*доставк.*)": "Стоимость доставки рассчитывается индивидуально. Напишите 'оператор'.",
+    r"(время.*|срок.*|когда.*придет.*|через.*дней.*|сроки.*доставк.*)": "Сроки: быстрое авто 10–15 дней, медленное авто 15–20 дней (Москва, рынок Южные Ворота)."
+}
+
+def find_best_match(user_text):
+    user_text = user_text.lower()
+    for pattern, answer in FAQ.items():
+        if re.search(pattern, user_text):
+            return answer
+    return None
+
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 
-class UserStates:
-    WAITING_FOR_TRACK = "waiting_for_track"
-    WAITING_FOR_ORDER = "waiting_for_order"
-
-# Система хранения данных
-def load_data():
-    if not os.path.exists(DATA_FILE):
-        return {}
-    try:
-        with open(DATA_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except:
-        return {}
-
-def save_data(data):
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-async def get_user_data(user_id, message=None):
-    data = load_data()
-    user_id = str(user_id)
-    if user_id not in data:
-        last_code = max([int(u['code'][2:]) for u in data.values()] or [0])
-        data[user_id] = {
-            "code": f"PR{last_code + 1:05d}",
-            "tracks": [],
-            "username": message.from_user.username if message else "",
-            "full_name": message.from_user.full_name if message else "",
-            "state": None
-        }
-        save_data(data)
-    return data[user_id]
-
-# Команды бота
-@dp.message_handler(commands=['start'])
-async def cmd_start(message: types.Message):
-    user = await get_user_data(message.from_user.id, message)
+@dp.message_handler(commands=["start"])
+async def start(message: types.Message):
     await message.answer(
-        f"👋 Привет! Ваш код: {user['code']}\n\n"
-        "Доступные команды:\n"
-        "/mycod - ваш код\n"
-        "/mytracks - список треков\n"
-        "/adress - адрес склада\n"
-        "/sendtrack - добавить трек\n"
-        "/buy - сделать заказ\n"
-        "/manager - связаться с менеджером"
+        "Привет! Я бот для заказов.\n"
+        "Команды:\n"
+        "/getcod — получить личный код\n"
+        "/adress — адрес склада\n"
+        "/sendtrack — отправить трек\n"
+        "/manager — связаться с оператором"
     )
 
-@dp.message_handler(commands=['mytracks'])
-async def cmd_mytracks(message: types.Message):
-    user = await get_user_data(message.from_user.id)
-    if not user['tracks']:
-        await message.answer("❌ У вас пока нет трек-номеров")
-        return
-    
-    tracks_list = "\n".join(
-        f"{i+1}. {t['track']} ({t['date']})" 
-        for i, t in enumerate(user['tracks'])
-    )
-    await message.answer(
-        f"📦 Ваши трек-номера (всего {len(user['tracks'])}):\n\n"
-        f"{tracks_list}"
-    )
-
-@dp.message_handler(commands=['sendtrack'])
-async def cmd_sendtrack(message: types.Message):
-    data = load_data()
+@dp.message_handler(commands=["getcod"])
+async def get_cod(message: types.Message):
     user_id = str(message.from_user.id)
-    user = await get_user_data(user_id, message)
-    
-    data[user_id]['state'] = UserStates.WAITING_FOR_TRACK
-    save_data(data)
-    
-    await message.answer(
-        "Отправьте трек-номер (формат: буквы и цифры, 10-20 символов)\n"
-        "Пример: AB123456789CD"
-    )
+    if user_id not in db["users"]:
+        code = generate_client_code()
+        db["users"][user_id] = {"code": code, "tracks": []}
+        save_db()
+        await message.answer(f"Ваш личный код: {code}")
+    else:
+        await message.answer(f"Ваш код уже есть: {db['users'][user_id]['code']}")
 
-@dp.message_handler(regexp=r'^[A-Za-z0-9]{10,20}$')
-async def handle_track(message: types.Message):
-    data = load_data()
+@dp.message_handler(commands=["adress"])
+async def adress(message: types.Message):
+    await message.answer("📦 Адрес склада: ВСТАВЬТЕ_АДРЕС_СКЛАДА")
+
+@dp.message_handler(commands=["sendtrack"])
+async def send_track(message: types.Message):
+    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add(KeyboardButton("Быстрое авто"), KeyboardButton("Медленное авто"))
+    await message.answer("Выберите способ доставки:", reply_markup=kb)
+
+@dp.message_handler(lambda msg: msg.text in ["Быстрое авто", "Медленное авто"])
+async def process_delivery(message: types.Message):
     user_id = str(message.from_user.id)
-    
-    if data.get(user_id, {}).get('state') != UserStates.WAITING_FOR_TRACK:
+    if user_id not in db["users"]:
+        await message.answer("Сначала получите код через /getcod")
         return
-    
-    track = message.text.upper()
-    user = data[user_id]
-    
-    # Добавляем новый трек
-    new_track = {
-        "track": track,
-        "date": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    }
-    user['tracks'].append(new_track)
-    track_count = len(user['tracks'])
-    
-    # Формируем историю треков
-    tracks_history = "\n".join(
-        f"{i+1}. {t['track']}" 
-        for i, t in enumerate(user['tracks'])
-    )
-    
-    # Отправляем на склад
+    db["users"][user_id]["last_delivery"] = message.text
+    save_db()
+    await message.answer("Теперь отправьте трек номер.", reply_markup=types.ReplyKeyboardRemove())
+
+@dp.message_handler(commands=["manager"])
+async def manager(message: types.Message):
     await bot.send_message(
-        WAREHOUSE_ID,
-        f"📦 Новый трек-номер\n\n"
-        f"👤 Клиент: {user['full_name']}\n"
-        f"🆔 Код: {user['code']}\n"
-        f"📮 Трек: {track}\n"
-        f"📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
-        f"🔢 Всего треков: {track_count}\n\n"
-        f"📋 История треков:\n{tracks_history}"
+        ADMIN_ID,
+        f"📩 Запрос к оператору!\n"
+        f"Имя: {message.from_user.full_name}\n"
+        f"Username: @{message.from_user.username if message.from_user.username else 'нет'}"
     )
-    
-    # Подтверждение пользователю
-    await message.answer(
-        f"✅ Трек-номер {track} успешно добавлен!\n\n"
-        f"Всего треков: {track_count}\n"
-        f"Посмотреть историю: /mytracks"
-    )
-    
-    # Сбрасываем состояние и сохраняем
-    data[user_id]['state'] = None
-    save_data(data)
+    await message.answer("Оператор скоро свяжется с вами.")
 
-# ... (остальные команды остаются без изменений)
+@dp.message_handler()
+async def handle_message(message: types.Message):
+    user_id = str(message.from_user.id)
+    text = message.text.strip()
 
-if __name__ == "__main__":
-    if not os.path.exists(DATA_FILE):
-        save_data({})
-    
-    executor.start_polling(dp, skip_updates=True)
+    if len(text) >= 5 and any(ch.isdigit() for ch in text):
+        if user_id not in db["users"]:
+            await message.answer("Сначала получите код через /getcod")
+            return
+        delivery = db["users"][user_id].get("last_delivery")
+        if not delivery:
+            await message.answer("Сначала выберите доставку через /sendtrack")
+            return
+
+        db["users"][user_id]["tracks"].append({"track": text, "delivery": delivery})
+        save_db()
+
+        await bot.send_message(
+            WAREHOUSE_ID,
+            f"📦 Новый трек!\n"
+f"Клиент: {db['users'][user_id]['code']}\n"
+            f"Доставка: {delivery}\n"
+            f"Трек: {text}"
+        )
+
+        tracks = db["users"][user_id]["tracks"]
+        history = "\\n".join([f"{t['track']} ({t['delivery']})" for t in tracks])
+        await message.answer(f"Ваш трек сохранён!\\nИстория ваших треков:\\n{history}")
+        return
+
+    response = find_best_match(text)
+    if response:
+        await message.answer(response)
+    else:
+        await message.answer("Извини, я не нашёл ответа. Напишите 'оператор' или /manager.")
+
+if name == "__main__":
+    asyncio.run(dp.start_polling())
