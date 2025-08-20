@@ -79,14 +79,10 @@ async def forward_to_manager(message: types.Message):
     await message.answer("✅ Ваш запрос отправлен менеджеру.")
 
 # --- Менеджер ---
-@dp.message(Command("manager"))
 async def manager_cmd(message: types.Message):
     user = message.from_user
     code = get_or_create_client_code(user.id)
-    text = f"📩 Запрос к менеджеру!
-Клиент: {user.full_name} ({user.id})
-Код: {code}
-Сообщение: {message.text}"
+    text = f"📩 Запрос к менеджеру!\nКлиент: {user.full_name} ({user.id})\nКод: {code}\nСообщение: {message.text}"
     await bot.send_message(MANAGER_ID, text)
     await message.answer("✅ Ваш запрос отправлен менеджеру.")
 
