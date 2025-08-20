@@ -63,7 +63,7 @@ def get_or_create_client_code(user_id: int):
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
     code = get_or_create_client_code(message.from_user.id)
-    await message.answer(f"👋 Добро пожаловать!\nВаш клиентский номер: {code}")
+    await message.answer(f"👋 Добро пожаловать!\n💎Ваш клиентский номер: {code}")
 
 # --- Заказать ---
 @dp.message(Command("buy"))
