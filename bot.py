@@ -7,7 +7,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 import asyncio
 
 # --- Константы ---
-BOT_TOKEN = "YOUR_BOT_TOKEN"  # <-- Вставь свой токен от BotFather
+BOT_TOKEN = "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI"  # <-- Вставь свой токен от BotFather
 MANAGER_ID = 7095008192       # ID менеджера
 WAREHOUSE_ID = 7095008192     # ID склада
 
