@@ -74,10 +74,7 @@ async def buy_cmd(message: types.Message):
 async def forward_to_manager(message: types.Message):
     user = message.from_user
     code = get_or_create_client_code(user.id)
-    text = f"🛒 Новый заказ!
-Клиент: {user.full_name} ({user.id})
-Код: {code}
-Сообщение: {message.text}"
+    text = f"🛒 Новый заказ!\nКлиент: {user.full_name} ({user.id})\nКод: {code}\nСообщение: {message.text}"
     await bot.send_message(MANAGER_ID, text)
     await message.answer("✅ Ваш запрос отправлен менеджеру.")
 
