@@ -37,6 +37,17 @@ CHINA_WAREHOUSE_ADDRESS = (
 
 
 # Инициализация бота
+import os
+from aiogram import Bot, Dispatcher
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+MANAGER_ID = int(os.getenv("MANAGER_ID", "7095008192") or 7095008192)
+WAREHOUSE_ID = int(os.getenv("WAREHOUSE_ID", "7095008192") or 7095008192)
+
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN is not set")
+
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
