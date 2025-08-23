@@ -1,5 +1,0 @@
-__pycache__/
-*.pyc
-.env
-database.db
-china_warehouse_bot.log
