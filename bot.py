@@ -1,233 +1,367 @@
 import os
-import re
-import json
-import asyncio
+import logging
+from typing import List, Optional, Tuple
+
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ContentType
 from aiogram.utils import executor
-from datetime import datetime
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher import FSMContext
+from aiogram.dispatcher.filters.state import State, StatesGroup
 
-TOKEN = "7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI"
-ADMIN_ID = 7095008192  # Ваш Telegram ID (число)
-WAREHOUSE_ID = 7095008192  # ID сотрудника склада
+from database import init_db, get_or_create_user_code, get_tracks, add_track
 
-# Полный адрес склада в Китае
-CHINA_WAREHOUSE_ADDRESS = """Китай, г. Гуанчжоу, район Байюнь
-ул. Складская 123, склад 456
-Контактное лицо: Иванов Иван
-Телефон: +86 123 4567 8910
-Ваш код: {user_code}"""
 
-DATA_FILE = "data.json"
+# Логирование
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger("china_warehouse_bot")
 
-def load_data():
-    if not os.path.exists(DATA_FILE):
-        return {}
-    try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        return {}
 
-def save_data(data):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+# Переменные окружения
+BOT_TOKEN = os.getenv("7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI
+")
+# По вашему запросу — по умолчанию обе переменные одинаковые (можно переопределить в Railway)
+MANAGER_ID = int(os.getenv("MANAGER_ID", "7095008192") or 7095008192)
+WAREHOUSE_ID = int(os.getenv("WAREHOUSE_ID", "7095008192") or 7095008192)
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher(bot)
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN is not set")
 
-class UserStates:
-    WAITING_FOR_TRACK = "waiting_for_track"
-    WAITING_FOR_ORDER = "waiting_for_order"
 
-async def generate_user_code(user_id):
-    data = load_data()
-    user_id = str(user_id)
-    if user_id not in data:
-        last_code = max([int(v['code'][2:]) for v in data.values()] or [0])
-        new_code = f"PR{last_code + 1:05d}"
-        data[user_id] = {
-            "code": new_code,
-            "tracks": [],
-            "username": "",
-            "full_name": "",
-            "state": None
-        }
-        save_data(data)
-    return data[user_id]['code']
+# Плейсхолдер адреса склада — замените этот текст на реальный адрес
+CHINA_WAREHOUSE_ADDRESS = (
+    "🏭 <b>АДРЕС СКЛАДА В КИТАЕ</b>\n\n"
+    "⬇️ ВСТАВЬТЕ НИЖЕ ВАШ РЕАЛЬНЫЙ АДРЕС СКЛАДА (замените этот текст) ⬇️\n"
+    "<i>Пример формата: Китай, провинция ..., г. ..., район ..., ул. ..., склад №...</i>\n\n"
+    "🔑 <b>ВАШ ЛИЧНЫЙ КОД КЛИЕНТА:</b> <code>{client_code}</code>\n"
+)
 
-@dp.message_handler(commands=['start'])
-async def start(message: types.Message):
-    user_code = await generate_user_code(message.from_user.id)
-    await message.answer(
-        f"Привет! Я бот для работы со сборными грузами из Китая.\n\n"
-        f"Ваш личный код: {user_code}\n\n"
-        "Доступные команды:\n"
-        "/mycod - показать личный код\n"
-        "/adress - адрес склада в Китае\n"
-        "/sendtrack - отправить трек-номер\n"
-        "/buy - сделать заказ\n"
-        "/manager - связаться с менеджером"
+
+# Инициализация бота
+storage = MemoryStorage()
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(bot, storage=storage)
+
+
+# Состояния
+class TrackStates(StatesGroup):
+    waiting_for_track = State()
+
+
+class BuyStates(StatesGroup):
+    waiting_for_details = State()
+
+
+def format_tracks(tracks: List[Tuple[str, Optional[str]]]) -> str:
+    if not tracks:
+        return "Нет зарегистрированных трек-кодов"
+    lines: List[str] = []
+    for idx, (track, delivery) in enumerate(tracks, start=1):
+        suffix = f" ({delivery})" if delivery else ""
+        lines.append(f"{idx}. <code>{track}</code>{suffix}")
+    return "\n".join(lines)
+
+
+@dp.message_handler(commands=["start"], state="*")
+async def cmd_start(message: types.Message, state: FSMContext):
+    await state.finish()
+    code = get_or_create_user_code(message.from_user.id)
+    welcome = (
+        f"🇨🇳 <b>Добро пожаловать!</b>\n\n"
+        f"🔑 Ваш личный код клиента: <code>{code}</code>\n\n"
+        f"Доступные команды:\n"
+        f"/getcod — получить личный код\n"
+        f"/adress — адрес склада в Китае\n"
+        f"/sendtrack — отправить трек-код\n"
+        f"/buy — оформить заказ через менеджера\n"
+        f"/mycod — список ваших трек-кодов\n"
+        f"/manager — связаться с менеджером\n"
     )
+    await message.answer(welcome, parse_mode="HTML")
+    await message.answer("✅ Команда выполнена.")
 
-@dp.message_handler(commands=['mycod'])
-async def show_my_code(message: types.Message):
-    user_code = await generate_user_code(message.from_user.id)
-    await message.answer(
-        f"🔑 Ваш личный код: {user_code}\n\n"
-        f"Используйте его при заказе товаров на китайских площадках.\n"
-        f"Адрес склада для доставки: /adress"
-    )
 
-@dp.message_handler(commands=['adress'])
-async def send_address(message: types.Message):
-    user_code = await generate_user_code(message.from_user.id)
-    address = CHINA_WAREHOUSE_ADDRESS.format(user_code=user_code)
-    await message.answer(f"🏭 Адрес склада в Китае:\n\n{address}")
+@dp.message_handler(commands=["getcod"], state="*")
+async def cmd_getcod(message: types.Message, state: FSMContext):
+    await state.finish()
+    code = get_or_create_user_code(message.from_user.id)
+    await message.answer(f"🔑 Ваш личный код клиента: <code>{code}</code>", parse_mode="HTML")
+    await message.answer("✅ Команда выполнена.")
 
-@dp.message_handler(commands=['sendtrack'])
-async def send_track(message: types.Message):
-    user_code = await generate_user_code(message.from_user.id)
-    data = load_data()
-    data[str(message.from_user.id)]['state'] = UserStates.WAITING_FOR_TRACK
-    save_data(data)
-    await message.answer(
-        f"Отправьте трек-номер для вашего кода {user_code}:\n\n"
-        "Пример: AB123456789CD"
-    )
 
-@dp.message_handler(regexp=r'^[A-Za-z0-9]{10,20}$')
-async def handle_track_number(message: types.Message):
-    data = load_data()
-    user_id = str(message.from_user.id)
-    
-    if user_id not in data or data[user_id].get('state') != UserStates.WAITING_FOR_TRACK:
-        return
-    
-    track = message.text.upper()
-    user_code = data[user_id]['code']
-    
-    data[user_id]["tracks"].append({
-        "track": track,
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    })
-    data[user_id]['state'] = None
-    save_data(data)
-    
-    await bot.send_message(
-        WAREHOUSE_ID,
-        f"📦 Новый трек-номер!\n"
-        f"Код клиента: {user_code}\n"
-        f"Трек: {track}\n"
-        f"Всего треков: {len(data[user_id]['tracks'])}"
-    )
-    
-    await message.answer(f"✅ Трек {track} добавлен к вашему коду {user_code}")
+@dp.message_handler(commands=["adress"], state="*")
+async def cmd_address(message: types.Message, state: FSMContext):
+    await state.finish()
+    code = get_or_create_user_code(message.from_user.id)
+    await message.answer(CHINA_WAREHOUSE_ADDRESS.format(client_code=code), parse_mode="HTML")
+    await message.answer("✅ Команда выполнена.")
 
-@dp.message_handler(commands=['buy'])
-async def start_order(message: types.Message):
-    user_code = await generate_user_code(message.from_user.id)
-    data = load_data()
-    data[str(message.from_user.id)] = {
-        "code": user_code,
-        "tracks": data.get(str(message.from_user.id), {}).get("tracks", []),
-        "username": message.from_user.username,
-        "full_name": message.from_user.full_name,
-        "state": UserStates.WAITING_FOR_ORDER
-    }
-    save_data(data)
-    await message.answer(
-        f"🛒 Оформление заказа (код: {user_code})\n\n"
-        "Что хотите купить и в каком количестве?\n"
-        "Можно прикрепить фото или файл с описанием.\n\n"
-        "Пример:\n"
-        "Футболки черные: 5 шт\n"
-        "Джинсы синие: 2 шт"
-    )
 
-@dp.message_handler(content_types=[ContentType.TEXT, ContentType.PHOTO, ContentType.DOCUMENT])
-async def handle_all_messages(message: types.Message):
-    data = load_data()
-    user_id = str(message.from_user.id)
-    
-    # Обработка заказов
-    if user_id in data and data[user_id].get('state') == UserStates.WAITING_FOR_ORDER:
-        user_code = data[user_id]['code']
-        full_name = message.from_user.full_name
-        username = f"@{message.from_user.username}" if message.from_user.username else "нет"
-        
-        # Получаем текст описания из разных источников
-        order_description = ""
-        if message.caption:  # Текст под фото/файлом
-            order_description = message.caption
-        elif message.text:  # Обычный текст
-            order_description = message.text
-        
-        # Формируем сообщение для админа
-        admin_message = (
-            f"🛍 Новый заказ!\n\n"
-            f"👤 Клиент: {full_name}\n"
-            f"📎 Username: {username}\n"
-            f"🆔 Код: {user_code}\n\n"
-            f"📦 Заказ:\n{order_description if order_description else 'Описание в прикрепленных файлах'}"
+def is_valid_track_number(text: str) -> bool:
+    t = (text or "").strip().upper()
+    if len(t) < 8 or len(t) > 40:
+        return False
+    # Мягкая проверка: разрешены латинские буквы и цифры, без специальных символов
+    return all("A" <= c <= "Z" or "0" <= c <= "9" for c in t)
+
+
+@dp.message_handler(commands=["sendtrack"], state="*")
+async def cmd_sendtrack(message: types.Message, state: FSMContext):
+    await state.finish()
+    get_or_create_user_code(message.from_user.id)  # ensure code exists
+    tracks = get_tracks(message.from_user.id)
+
+    if tracks:
+        await message.answer(
+            "📦 Ваша история зарегистрированных трек-кодов:\n\n" + format_tracks(tracks),
+            parse_mode="HTML",
         )
-        
+    await message.answer("✅ Команда принята. 📝 Отправьте следующий трек-код одним сообщением. Для отмены — /cancel")
+    await TrackStates.waiting_for_track.set()
+
+
+@dp.message_handler(commands=["cancel"], state="*")
+async def cmd_cancel(message: types.Message, state: FSMContext):
+    await state.finish()
+    await message.answer("❌ Действие отменено.")
+
+
+@dp.message_handler(state=TrackStates.waiting_for_track, content_types=types.ContentTypes.TEXT)
+async def handle_track_input(message: types.Message, state: FSMContext):
+    track = (message.text or "").strip().upper()
+    if not is_valid_track_number(track):
+        await message.answer("⚠️ Неверный формат трек-кода. Пришлите другой или /cancel")
+        return
+
+    # Сохраняем в БД
+    add_track(message.from_user.id, track)
+
+    # Готовим информацию
+    code = get_or_create_user_code(message.from_user.id)
+    tracks = get_tracks(message.from_user.id)
+    full_name = message.from_user.full_name or ""
+    username = f"@{message.from_user.username}" if message.from_user.username else "не указан"
+
+    # Пересылаем сотруднику склада с инфо о пользователе и всеми треками
+    if WAREHOUSE_ID:
         try:
-            # Отправляем текстовую часть
-            sent_message = await bot.send_message(ADMIN_ID, admin_message)
-            
-            # Отправляем вложения если есть
-            if message.photo:
-                await bot.send_photo(
-                    ADMIN_ID, 
-                    message.photo[-1].file_id,
-                    caption=f"Фото от {full_name} ({user_code})",
-                    reply_to_message_id=sent_message.message_id
-                )
-            elif message.document:
-                await bot.send_document(
-                    ADMIN_ID,
-                    message.document.file_id,
-                    caption=f"Файл от {full_name} ({user_code})",
-                    reply_to_message_id=sent_message.message_id
-                )
-            
-            data[user_id]['state'] = None
-            save_data(data)
-            await message.answer("✅ Заказ отправлен менеджеру. Ожидайте связи!")
+            text = (
+                "📦 <b>НОВЫЙ ТРЕК-КОД</b>\n\n"
+                f"🆔 Код клиента: <code>{code}</code>\n"
+                f"👤 Имя: {full_name}\n"
+                f"📱 Username: {username}\n"
+                f"🆔 Telegram ID: <code>{message.from_user.id}</code>\n\n"
+                f"📋 Текущий трек: <code>{track}</code>\n\n"
+                "📚 Все треки пользователя:\n" + format_tracks(tracks)
+            )
+            await bot.send_message(WAREHOUSE_ID, text, parse_mode="HTML")
         except Exception as e:
-            print(f"Ошибка отправки сообщения админу: {e}")
-            await message.answer("❌ Произошла ошибка при отправке заказа. Попробуйте позже.")
-        return
-    
-    # Обработка команды "оператор"
-    if message.text and message.text.lower() == "оператор":
-        await contact_manager(message)
-        return
-    
-    # Если не распознано - отправляем подсказку
-    await message.answer("Не понял ваш запрос. Используйте команды или напишите 'оператор'.")
+            logger.exception("Failed to notify warehouse: %s", e)
 
-async def contact_manager(message: types.Message):
-    user_code = await generate_user_code(message.from_user.id)
-    full_name = message.from_user.full_name
-    username = f"@{message.from_user.username}" if message.from_user.username else "нет"
-    
-    await message.answer("Менеджер скоро свяжется с вами.")
+    await state.finish()
+    await message.answer("✅ Трек-код получен и передан сотруднику склада.")
+
+
+@dp.message_handler(commands=["buy"], state="*")
+async def cmd_buy(message: types.Message, state: FSMContext):
+    await state.finish()
+    await message.answer("✅ Команда принята. 🛒 Что вы хотите заказать и в каком количестве? Опишите в следующем сообщении. Для отмены — /cancel")
+    await BuyStates.waiting_for_details.set()
+
+
+@dp.message_handler(state=BuyStates.waiting_for_details, content_types=[types.ContentType.TEXT, types.ContentType.PHOTO])
+async def handle_buy_details(message: types.Message, state: FSMContext):
+    text = message.caption or message.text or ""
+    if len(text.strip()) < 3:
+        await message.answer("⚠️ Сообщение слишком короткое. Опишите заказ подробнее или /cancel")
+        return
+
+    code = get_or_create_user_code(message.from_user.id)
+    full_name = message.from_user.full_name or ""
+    username = f"@{message.from_user.username}" if message.from_user.username else "не указан"
+
+    notify = (
+        "🛒 <b>НОВЫЙ ЗАПРОС НА ПОКУПКУ</b>\n\n"
+        f"🆔 Код клиента: <code>{code}</code>\n"
+        f"👤 Имя: {full_name}\n"
+        f"📱 Username: {username}\n"
+        f"🆔 Telegram ID: <code>{message.from_user.id}</code>\n\n"
+        f"📝 Сообщение клиента:\n{text}"
+    )
+
+    if MANAGER_ID:
+        try:
+            if message.photo:
+                await bot.send_photo(MANAGER_ID, message.photo[-1].file_id, caption=notify, parse_mode="HTML")
+            else:
+                await bot.send_message(MANAGER_ID, notify, parse_mode="HTML")
+        except Exception as e:
+            logger.exception("Failed to notify manager: %s", e)
+
+    await state.finish()
+    await message.answer("✅ Ваш запрос отправлен менеджеру. Он свяжется с вами.")
+
+
+@dp.message_handler(commands=["mycod"], state="*")
+async def cmd_mycod(message: types.Message, state: FSMContext):
+    await state.finish()
+    code = get_or_create_user_code(message.from_user.id)
+    tracks = get_tracks(message.from_user.id)
+    text = (
+        f"🔑 Ваш код клиента: <code>{code}</code>\n\n"
+        + ("📦 Ваши трек-коды:\n\n" + format_tracks(tracks) if tracks else "Пока нет зарегистрированных трек-кодов")
+    )
+    await message.answer(text, parse_mode="HTML")
+    await message.answer("✅ Команда выполнена.")
+
+
+@dp.message_handler(commands=["manager"], state="*")
+async def cmd_manager(message: types.Message, state: FSMContext):
+    await state.finish()
+    code = get_or_create_user_code(message.from_user.id)
+    full_name = message.from_user.full_name or ""
+    username = f"@{message.from_user.username}" if message.from_user.username else "не указан"
+
+    if MANAGER_ID:
+        try:
+            text = (
+                "📞 <b>КЛИЕНТ ХОЧЕТ СВЯЗАТЬСЯ С МЕНЕДЖЕРОМ</b>\n\n"
+                f"🆔 Код клиента: <code>{code}</code>\n"
+                f"👤 Имя: {full_name}\n"
+                f"📱 Username: {username}\n"
+                f"🆔 Telegram ID: <code>{message.from_user.id}</code>\n"
+            )
+            await bot.send_message(MANAGER_ID, text, parse_mode="HTML")
+        except Exception as e:
+            logger.exception("Failed to notify manager: %s", e)
+
+    await message.answer("✅ Сообщение менеджеру отправлено. Ожидайте контакт.")
+
+
+@dp.message_handler()
+async def fallback(message: types.Message):
+    await message.answer("Неизвестная команда. Доступно: /start, /getcod, /adress, /sendtrack, /buy, /mycod, /manager")
+
+
+async def on_startup(dp: Dispatcher):
+    init_db()
     try:
-        await bot.send_message(
-            ADMIN_ID,
-            f"📞 Запрос связи с менеджером!\n\n"
-            f"👤 Клиент: {full_name}\n"
-            f"📎 Username: {username}\n"
-            f"🆔 Код: {user_code}\n\n"
-            f"Для быстрого ответа: https://t.me/{message.from_user.username}" if message.from_user.username else ""
-        )
-    except Exception as e:
-        print(f"Ошибка отправки сообщения админу: {e}")
+        if MANAGER_ID:
+            await bot.send_message(MANAGER_ID, "🤖 Бот запущен")
+    except Exception:
+        pass
+
+
+async def on_shutdown(dp: Dispatcher):
+    try:
+        if MANAGER_ID:
+            await bot.send_message(MANAGER_ID, "🔴 Бот остановлен")
+    except Exception:
+        pass
+
 
 if __name__ == "__main__":
-    if not os.path.exists(DATA_FILE):
-        save_data({})
-    
-    executor.start_polling(dp, skip_updates=True)
+    executor.start_polling(dp, skip_updates=True, on_startup=on_startup, on_shutdown=on_shutdown)
+# database.py
+import sqlite3
+from typing import List, Optional, Tuple
+
+DB_PATH = "database.db"
+
+
+def init_db() -> None:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            code TEXT UNIQUE
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tracks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            track TEXT,
+            delivery TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY(user_id) REFERENCES users(user_id)
+        )
+        """
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def get_user_code(user_id: int) -> Optional[str]:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT code FROM users WHERE user_id=?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
+def _generate_next_code(cursor) -> str:
+    cursor.execute("SELECT code FROM users WHERE code LIKE 'PB%'")
+    rows = cursor.fetchall()
+    max_num = 0
+    for (code,) in rows:
+        try:
+            if code and code.startswith("PB"):
+                num = int(code[2:])
+                if num > max_num:
+                    max_num = num
+        except Exception:
+            continue
+    next_num = max_num + 1
+    return f"PB{next_num:05d}"
+
+
+def get_or_create_user_code(user_id: int) -> str:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("BEGIN IMMEDIATE")
+    try:
+        cursor.execute("SELECT code FROM users WHERE user_id=?", (user_id,))
+        row = cursor.fetchone()
+        if row and row[0]:
+            code = row[0]
+        else:
+            code = _generate_next_code(cursor)
+            cursor.execute(
+                "INSERT OR REPLACE INTO users (user_id, code) VALUES (?, ?)",
+                (user_id, code),
+            )
+        conn.commit()
+        return code
+    finally:
+        conn.close()
+
+
+def add_track(user_id: int, track: str, delivery: str = "") -> None:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO tracks (user_id, track, delivery) VALUES (?, ?, ?)",
+        (user_id, track, delivery),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_tracks(user_id: int) -> List[Tuple[str, Optional[str]]]:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT track, delivery FROM tracks WHERE user_id=? ORDER BY id ASC",
+        (user_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
