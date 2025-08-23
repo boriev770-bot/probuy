@@ -17,8 +17,7 @@ logger = logging.getLogger("china_warehouse_bot")
 
 
 # Переменные окружения
-BOT_TOKEN = os.getenv("7559588518:AAEv5n_8N_gGo97HwpZXDHTi3EQ40S1aFcI
-")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 # По вашему запросу — по умолчанию обе переменные одинаковые (можно переопределить в Railway)
 MANAGER_ID = int(os.getenv("MANAGER_ID", "7095008192") or 7095008192)
 WAREHOUSE_ID = int(os.getenv("WAREHOUSE_ID", "7095008192") or 7095008192)
