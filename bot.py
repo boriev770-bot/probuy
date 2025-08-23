@@ -2,6 +2,10 @@ import os
 import logging
 from typing import List, Optional, Tuple
 
+import logging, os
+logging.basicConfig(level=logging.INFO)
+logging.info(f"RUNNING FILE: {os.path.abspath(__file__)}")
+
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ContentType
 from aiogram.utils import executor
