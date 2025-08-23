@@ -1,22 +1,20 @@
 import os
 import logging
-from typing import List, Optional, Tuple
-
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import ContentType
-from aiogram.utils import executor
+from aiogram import Bot, Dispatcher
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.filters.state import State, StatesGroup
 
-from database import init_db, get_or_create_user_code, get_tracks, add_track
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-logger = logging.getLogger("china_warehouse_bot")
+logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MANAGER_ID = int(os.getenv("MANAGER_ID", "7095008192") or 7095008192)
 WAREHOUSE_ID = int(os.getenv("WAREHOUSE_ID", "7095008192") or 7095008192)
+
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN is not set")
+
+bot = Bot(token=BOT_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(bot, storage=storage)
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is not set")
