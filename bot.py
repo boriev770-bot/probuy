@@ -36,8 +36,8 @@ CHINA_WAREHOUSE_ADDRESS = (
 
 
 # Инициализация бота
-storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
+storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
 
