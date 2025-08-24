@@ -1,53 +1,90 @@
 import os
-import sqlite3
 from typing import List, Optional, Tuple
 
-# Путь к БД. Для Railway Volume укажи переменную окружения DB_PATH, например: /app/data/database.db
-DB_PATH = os.getenv("DB_PATH", "database.db")
+import psycopg2
+from psycopg2.pool import SimpleConnectionPool
+
+# Railway Postgres плагин обычно создает переменную окружения DATABASE_URL
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set (add Railway PostgreSQL plugin and redeploy)")
+
+_pool: SimpleConnectionPool = None  # type: ignore
+
+
+def _get_pool() -> SimpleConnectionPool:
+    global _pool
+    if _pool is None:
+        _pool = SimpleConnectionPool(minconn=1, maxconn=10, dsn=DATABASE_URL)
+    return _pool
+
+
+def _execute(query: str, params: tuple = ()) -> None:
+    pool = _get_pool()
+    conn = pool.getconn()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+    finally:
+        pool.putconn(conn)
+
+
+def _fetchone(query: str, params: tuple = ()) -> Optional[tuple]:
+    pool = _get_pool()
+    conn = pool.getconn()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                return cur.fetchone()
+    finally:
+        pool.putconn(conn)
+
+
+def _fetchall(query: str, params: tuple = ()) -> List[tuple]:
+    pool = _get_pool()
+    conn = pool.getconn()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                return cur.fetchall()
+    finally:
+        pool.putconn(conn)
 
 
 def init_db() -> None:
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    cursor.execute(
+    _execute(
         """
         CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
+            user_id BIGINT PRIMARY KEY,
             code TEXT UNIQUE
         )
         """
     )
-
-    cursor.execute(
+    _execute(
         """
         CREATE TABLE IF NOT EXISTS tracks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            track TEXT,
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT REFERENCES users(user_id) ON DELETE CASCADE,
+            track TEXT NOT NULL,
             delivery TEXT,
-            created_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY(user_id) REFERENCES users(user_id)
+            created_at TIMESTAMPTZ DEFAULT NOW()
         )
         """
     )
 
-    conn.commit()
-    conn.close()
-
 
 def get_user_code(user_id: int) -> Optional[str]:
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT code FROM users WHERE user_id=?", (user_id,))
-    row = cursor.fetchone()
-    conn.close()
+    row = _fetchone("SELECT code FROM users WHERE user_id=%s", (user_id,))
     return row[0] if row else None
 
 
-def _generate_next_code(cursor) -> str:
-    cursor.execute("SELECT code FROM users WHERE code LIKE 'PB%'")
-    rows = cursor.fetchall()
+def _generate_next_code_tx(cur) -> str:
+    # Берем все коды PB, находим максимальный номер и увеличиваем
+    cur.execute("SELECT code FROM users WHERE code LIKE 'PB%'")
+    rows = cur.fetchall()
     max_num = 0
     for (code,) in rows:
         try:
@@ -62,44 +99,42 @@ def _generate_next_code(cursor) -> str:
 
 
 def get_or_create_user_code(user_id: int) -> str:
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("BEGIN IMMEDIATE")
+    pool = _get_pool()
+    conn = pool.getconn()
     try:
-        cursor.execute("SELECT code FROM users WHERE user_id=?", (user_id,))
-        row = cursor.fetchone()
-        if row and row[0]:
-            code = row[0]
-        else:
-            code = _generate_next_code(cursor)
-            cursor.execute(
-                "INSERT OR REPLACE INTO users (user_id, code) VALUES (?, ?)",
-                (user_id, code),
-            )
-        conn.commit()
-        return code
+        with conn:
+            with conn.cursor() as cur:
+                # Блокируем строку пользователя (если есть) и генерим код атомарно
+                cur.execute("SELECT code FROM users WHERE user_id=%s FOR UPDATE", (user_id,))
+                row = cur.fetchone()
+                if row and row[0]:
+                    return row[0]
+
+                new_code = _generate_next_code_tx(cur)
+                cur.execute(
+                    """
+                    INSERT INTO users (user_id, code)
+                    VALUES (%s, %s)
+                    ON CONFLICT (user_id) DO UPDATE
+                    SET code = EXCLUDED.code
+                    """,
+                    (user_id, new_code),
+                )
+                return new_code
     finally:
-        conn.close()
+        pool.putconn(conn)
 
 
 def add_track(user_id: int, track: str, delivery: str = "") -> None:
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO tracks (user_id, track, delivery) VALUES (?, ?, ?)",
+    _execute(
+        "INSERT INTO tracks (user_id, track, delivery) VALUES (%s, %s, %s)",
         (user_id, track, delivery),
     )
-    conn.commit()
-    conn.close()
 
 
 def get_tracks(user_id: int) -> List[Tuple[str, Optional[str]]]:
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT track, delivery FROM tracks WHERE user_id=? ORDER BY id ASC",
+    rows = _fetchall(
+        "SELECT track, delivery FROM tracks WHERE user_id=%s ORDER BY id ASC",
         (user_id,),
     )
-    rows = cursor.fetchall()
-    conn.close()
-    return rows
+    return [(r[0], r[1]) for r in rows]
