@@ -1,5 +1,6 @@
 import os
 import logging
+import re
 from typing import List, Optional, Tuple
 
 from aiogram import Bot, Dispatcher, types
@@ -14,7 +15,16 @@ from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 
-from database import init_db, get_user_code, get_or_create_user_code, get_tracks, add_track
+from database import (
+    init_db,
+    get_user_code,
+    get_or_create_user_code,
+    get_tracks,
+    add_track,
+    add_track_photo,
+    get_track_photos,
+    find_user_ids_by_track,
+)
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -50,6 +60,10 @@ class BuyStates(StatesGroup):
     waiting_for_details = State()
 
 
+class PhotoStates(StatesGroup):
+    waiting_for_track = State()
+
+
 def get_main_menu_inline() -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
@@ -63,6 +77,9 @@ def get_main_menu_inline() -> InlineKeyboardMarkup:
     kb.add(
         InlineKeyboardButton("🚚 Отправить трек", callback_data="menu_sendtrack"),
         InlineKeyboardButton("📦 Мои треки", callback_data="menu_mytracks"),
+    )
+    kb.add(
+        InlineKeyboardButton("📷 Фотоконтроль", callback_data="menu_photokontrol"),
     )
     return kb
 
@@ -107,6 +124,18 @@ def is_valid_track_number(text: str) -> bool:
     if len(t) < 8 or len(t) > 40:
         return False
     return all("A" <= c <= "Z" or "0" <= c <= "9" for c in t)
+
+
+def extract_track_from_text(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return None
+    text_upper = text.upper()
+    # Ищем подходящую последовательность символов A-Z0-9 длиной 8..40
+    match = re.search(r"[A-Z0-9]{8,40}", text_upper)
+    if match:
+        candidate = match.group(0)
+        return candidate if is_valid_track_number(candidate) else None
+    return None
 
 
 async def require_code_or_hint(message: types.Message) -> Optional[str]:
@@ -413,6 +442,113 @@ async def confirm_track(callback: CallbackQuery, state: FSMContext):
         parse_mode="HTML",
     )
     await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+
+
+@dp.callback_query_handler(lambda c: c.data == "menu_photokontrol", state="*")
+@dp.message_handler(commands=["photo", "photos"], state="*")
+async def menu_photokontrol(cb_or_msg, state: FSMContext):
+    await state.finish()
+    if isinstance(cb_or_msg, CallbackQuery):
+        await bot.answer_callback_query(cb_or_msg.id)
+        tgt = cb_or_msg.message
+        user_id = cb_or_msg.from_user.id
+    else:
+        tgt = cb_or_msg
+        user_id = cb_or_msg.from_user.id
+
+    code = get_user_code(user_id)
+    if not code:
+        await tgt.answer("Сначала получите личный код: нажмите «🔑 Получить код».", reply_markup=get_main_menu_inline())
+        return
+
+    user_tracks = get_tracks(user_id)
+    if user_tracks:
+        await tgt.answer("📦 Ваши треки:\n\n" + format_tracks(user_tracks), parse_mode="HTML")
+    await tgt.answer("📷 Отправьте трек-код, чтобы получить фото. Для отмены — /cancel")
+    await PhotoStates.waiting_for_track.set()
+
+
+@dp.message_handler(state=PhotoStates.waiting_for_track, content_types=ContentType.TEXT)
+async def handle_photo_request(message: types.Message, state: FSMContext):
+    code = await require_code_or_hint(message)
+    if not code:
+        await state.finish()
+        return
+
+    track = (message.text or "").strip().upper()
+    if not is_valid_track_number(track):
+        await message.answer("⚠️ Неверный формат трек-кода. Пришлите другой или /cancel")
+        return
+
+    photos = get_track_photos(track)
+    if not photos:
+        await state.finish()
+        await message.answer(
+            f"📭 Фото по треку <code>{track}</code> пока не загружены.",
+            parse_mode="HTML",
+        )
+        await message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+        return
+
+    # Отправляем все фото пользователю
+    first = True
+    for file_id in photos:
+        try:
+            caption = f"📷 Фото по треку: <code>{track}</code>" if first else None
+            await bot.send_photo(message.chat.id, file_id, caption=caption, parse_mode="HTML")
+            first = False
+        except Exception as e:
+            logger.exception("Failed to send track photo to user: %s", e)
+
+    await state.finish()
+    await message.answer("✅ Все доступные фото отправлены.")
+    await message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+
+
+@dp.message_handler(content_types=[ContentType.PHOTO], state="*")
+async def warehouse_photo_upload(message: types.Message, state: FSMContext):
+    # Обрабатываем фото только от аккаунта склада
+    if message.from_user.id != WAREHOUSE_ID:
+        return
+
+    # Пытаемся извлечь трек из подписи к фото или из реплая
+    track = extract_track_from_text(message.caption)
+    if not track and message.reply_to_message:
+        # Пытаемся из текста или подписи исходного сообщения
+        track = extract_track_from_text(getattr(message.reply_to_message, "text", None) or getattr(message.reply_to_message, "caption", None))
+
+    if not track:
+        await message.answer(
+            "⚠️ Не удалось распознать трек-код. Укажите трек в подписи (например: AB123456789CN) или отправьте фото ответом на сообщение с треком."
+        )
+        return
+
+    track = track.upper()
+    file_id = message.photo[-1].file_id
+
+    try:
+        add_track_photo(track, file_id, uploaded_by=message.from_user.id, caption=message.caption)
+    except Exception as e:
+        logger.exception("Failed to save track photo: %s", e)
+        await message.answer("❌ Ошибка сохранения фото. Попробуйте позже.")
+        return
+
+    # Ищем пользователей, у кого зарегистрирован этот трек
+    user_ids = find_user_ids_by_track(track)
+    sent_count = 0
+    for uid in set(user_ids):
+        try:
+            await bot.send_photo(uid, file_id, caption=f"📷 Фото по треку: <code>{track}</code>", parse_mode="HTML")
+            sent_count += 1
+        except Exception as e:
+            logger.exception("Failed to deliver track photo to user %s: %s", uid, e)
+
+    if sent_count > 0:
+        await message.answer(f"✅ Фото сохранено и отправлено {sent_count} клиенту(ам).")
+    else:
+        await message.answer(
+            "ℹ️ Фото сохранено. Клиенты по этому треку не найдены. Как только клиент зарегистрирует трек, он сможет увидеть фото."
+        )
 
 
 @dp.message_handler()
