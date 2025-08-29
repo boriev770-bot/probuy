@@ -74,6 +74,18 @@ def init_db() -> None:
         )
         """
     )
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS track_photos (
+            id SERIAL PRIMARY KEY,
+            track TEXT NOT NULL,
+            file_id TEXT NOT NULL,
+            uploaded_by BIGINT,
+            caption TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+        """
+    )
 
 
 def get_user_code(user_id: int) -> Optional[str]:
@@ -138,3 +150,26 @@ def get_tracks(user_id: int) -> List[Tuple[str, Optional[str]]]:
         (user_id,),
     )
     return [(r[0], r[1]) for r in rows]
+
+
+def add_track_photo(track: str, file_id: str, uploaded_by: Optional[int] = None, caption: Optional[str] = None) -> None:
+    _execute(
+        "INSERT INTO track_photos (track, file_id, uploaded_by, caption) VALUES (%s, %s, %s, %s)",
+        (track, file_id, uploaded_by, caption),
+    )
+
+
+def get_track_photos(track: str) -> List[str]:
+    rows = _fetchall(
+        "SELECT file_id FROM track_photos WHERE track=%s ORDER BY id ASC",
+        (track,),
+    )
+    return [r[0] for r in rows]
+
+
+def find_user_ids_by_track(track: str) -> List[int]:
+    rows = _fetchall(
+        "SELECT DISTINCT user_id FROM tracks WHERE track=%s",
+        (track,),
+    )
+    return [r[0] for r in rows if r and r[0] is not None]
