@@ -173,3 +173,15 @@ def find_user_ids_by_track(track: str) -> List[int]:
         (track,),
     )
     return [r[0] for r in rows if r and r[0] is not None]
+
+
+def delete_all_user_tracks(user_id: int) -> int:
+    pool = _get_pool()
+    conn = pool.getconn()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM tracks WHERE user_id=%s", (user_id,))
+                return cur.rowcount or 0
+    finally:
+        pool.putconn(conn)

@@ -26,6 +26,7 @@ from database import (
     add_track_photo,
     get_track_photos,
     find_user_ids_by_track,
+    delete_all_user_tracks,
 )
 
 
@@ -83,6 +84,9 @@ def get_main_menu_inline() -> InlineKeyboardMarkup:
     kb.add(
         InlineKeyboardButton("📷 Фотоконтроль", callback_data="menu_photokontrol"),
     )
+    kb.add(
+        InlineKeyboardButton("🧹 Очистить историю", callback_data="menu_clearhistory"),
+    )
     return kb
 
 
@@ -92,6 +96,7 @@ def get_main_menu_reply() -> ReplyKeyboardMarkup:
     kb.row(KeyboardButton("🔑 Получить код"), KeyboardButton("📍 Получить адрес"))
     kb.row(KeyboardButton("🚚 Отправить трек"), KeyboardButton("📦 Мои треки"))
     kb.row(KeyboardButton("📷 Фотоконтроль"))
+    kb.row(KeyboardButton("🧹 Очистить историю"))
     return kb
 
 
@@ -117,6 +122,21 @@ def confirm_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_track"),
         InlineKeyboardButton("❌ Отменить", callback_data="confirm_cancel"),
     )
+    return kb
+
+
+def clear_history_confirm_keyboard() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton("🧹 Очистить", callback_data="clear_confirm"),
+        InlineKeyboardButton("❌ Отменить", callback_data="clear_cancel"),
+    )
+    return kb
+
+
+def clear_history_entry_keyboard() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup(row_width=1)
+    kb.add(InlineKeyboardButton("🧹 Очистить историю", callback_data="menu_clearhistory"))
     return kb
 
 
@@ -163,7 +183,8 @@ async def cmd_start(message: types.Message, state: FSMContext):
     welcome = (
         "🇨🇳 <b>Добро пожаловать!</b>\n\n"
         "Нажмите «🔑 Получить код», чтобы создать ваш личный код клиента.\n"
-        "Затем используйте остальные функции в меню."
+        "Затем используйте остальные функции в меню.\n\n"
+        "🧹 Теперь вы можете очистить историю ваших трек-кодов в любой момент."
     )
     await message.answer(welcome, parse_mode="HTML", reply_markup=get_main_menu_reply())
     await message.answer("✅ Команда выполнена.")
@@ -229,7 +250,7 @@ async def menu_mytracks(cb_or_msg, state: FSMContext):
 
     tracks = get_tracks(user_id)
     text = f"🔑 Ваш код клиента: <code>{code}</code>\n\n" + ("📦 Ваши трек-коды:\n\n" + format_tracks(tracks) if tracks else "Пока нет зарегистрированных трек-кодов")
-    await tgt.answer(text, parse_mode="HTML")
+    await tgt.answer(text, parse_mode="HTML", reply_markup=clear_history_entry_keyboard())
     await tgt.answer("Выберите действие:", reply_markup=get_main_menu_reply())
 
 
@@ -343,7 +364,11 @@ async def menu_sendtrack(cb_or_msg, state: FSMContext):
 
     tracks = get_tracks(user_id)
     if tracks:
-        await tgt.answer("📦 Ваша история зарегистрированных трек-кодов:\n\n" + format_tracks(tracks), parse_mode="HTML")
+        await tgt.answer(
+            "📦 Ваша история зарегистрированных трек-кодов:\n\n" + format_tracks(tracks),
+            parse_mode="HTML",
+            reply_markup=clear_history_entry_keyboard(),
+        )
     await tgt.answer("📝 Отправьте трек-код одним сообщением. Для отмены — /cancel")
     await TrackStates.waiting_for_track.set()
 
@@ -353,6 +378,58 @@ async def cmd_cancel(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("❌ Действие отменено.")
     await message.answer("Выберите действие:", reply_markup=get_main_menu_reply())
+
+
+@dp.callback_query_handler(lambda c: c.data == "menu_clearhistory", state="*")
+@dp.message_handler(lambda m: (m.text or "").strip() == "🧹 Очистить историю", state="*")
+async def clear_history_entry(cb_or_msg, state: FSMContext):
+    await state.finish()
+    if isinstance(cb_or_msg, CallbackQuery):
+        await bot.answer_callback_query(cb_or_msg.id)
+        tgt = cb_or_msg.message
+        user_id = cb_or_msg.from_user.id
+    else:
+        tgt = cb_or_msg
+        user_id = cb_or_msg.from_user.id
+
+    code = get_user_code(user_id)
+    if not code:
+        await tgt.answer("Сначала получите личный код: нажмите «🔑 Получить код».", reply_markup=get_main_menu_reply())
+        return
+
+    tracks = get_tracks(user_id)
+    if not tracks:
+        await tgt.answer("ℹ️ История пуста. Очищать нечего.")
+        await tgt.answer("Выберите действие:", reply_markup=get_main_menu_reply())
+        return
+
+    await tgt.answer(
+        "Вы уверены, что хотите удалить всю историю трек-кодов? Это действие нельзя отменить.",
+        reply_markup=clear_history_confirm_keyboard(),
+    )
+
+
+@dp.callback_query_handler(lambda c: c.data in ("clear_confirm", "clear_cancel"), state="*")
+async def clear_history_confirm(callback: CallbackQuery, state: FSMContext):
+    await bot.answer_callback_query(callback.id)
+    if callback.data == "clear_cancel":
+        await state.finish()
+        await callback.message.edit_text("❌ Очистка отменена")
+        await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_reply())
+        return
+
+    user_id = callback.from_user.id
+    code = get_user_code(user_id)
+    if not code:
+        await state.finish()
+        await callback.message.edit_text("Сначала получите личный код: нажмите «🔑 Получить код».")
+        await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_reply())
+        return
+
+    deleted = delete_all_user_tracks(user_id)
+    await state.finish()
+    await callback.message.edit_text(f"✅ История очищена. Удалено записей: {deleted}.")
+    await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_reply())
 
 
 @dp.message_handler(state=TrackStates.waiting_for_track, content_types=ContentType.TEXT)
@@ -474,7 +551,11 @@ async def menu_photokontrol(cb_or_msg, state: FSMContext):
 
     user_tracks = get_tracks(user_id)
     if user_tracks:
-        await tgt.answer("📦 Ваши треки:\n\n" + format_tracks(user_tracks), parse_mode="HTML")
+        await tgt.answer(
+            "📦 Ваши треки:\n\n" + format_tracks(user_tracks),
+            parse_mode="HTML",
+            reply_markup=clear_history_entry_keyboard(),
+        )
     await tgt.answer("📷 Отправьте трек-код, чтобы получить фото. Для отмены — /cancel")
     await PhotoStates.waiting_for_track.set()
 
@@ -519,6 +600,13 @@ async def handle_photo_request(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("✅ Все доступные фото отправлены.")
     await message.answer("Выберите действие:", reply_markup=get_main_menu_reply())
+    # Предложим возможность очистить историю
+    user_tracks = get_tracks(message.from_user.id)
+    if user_tracks:
+        await message.answer(
+            "Нужно очистить историю треков?",
+            reply_markup=clear_history_entry_keyboard(),
+        )
 
 
 @dp.message_handler(content_types=[ContentType.PHOTO], state="*")
