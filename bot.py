@@ -8,6 +8,8 @@ from aiogram.types import (
     ContentType,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
     CallbackQuery,
 )
 from aiogram.utils import executor
@@ -84,6 +86,15 @@ def get_main_menu_inline() -> InlineKeyboardMarkup:
     return kb
 
 
+def get_main_menu_reply() -> ReplyKeyboardMarkup:
+    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.row(KeyboardButton("🛒 Заказать"), KeyboardButton("👨‍💼 Менеджер"))
+    kb.row(KeyboardButton("🔑 Получить код"), KeyboardButton("📍 Получить адрес"))
+    kb.row(KeyboardButton("🚚 Отправить трек"), KeyboardButton("📦 Мои треки"))
+    kb.row(KeyboardButton("📷 Фотоконтроль"))
+    return kb
+
+
 DELIVERY_TYPES = {
     "fast_auto": {"name": "🚛 Быстрое авто"},
     "slow_auto": {"name": "🚚 Медленное авто"},
@@ -154,7 +165,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         "Нажмите «🔑 Получить код», чтобы создать ваш личный код клиента.\n"
         "Затем используйте остальные функции в меню."
     )
-    await message.answer(welcome, parse_mode="HTML", reply_markup=get_main_menu_inline())
+    await message.answer(welcome, parse_mode="HTML", reply_markup=get_main_menu_reply())
     await message.answer("✅ Команда выполнена.")
 
 
@@ -175,7 +186,7 @@ async def menu_getcod(cb_or_msg, state: FSMContext):
         code = get_or_create_user_code(user_id)
 
     await tgt.answer(f"🔑 Ваш личный код клиента: <code>{code}</code>", parse_mode="HTML")
-    await tgt.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+    await tgt.answer("Выберите действие:", reply_markup=get_main_menu_reply())
 
 
 @dp.callback_query_handler(lambda c: c.data == "menu_address", state="*")
@@ -192,11 +203,11 @@ async def menu_address(cb_or_msg, state: FSMContext):
 
     code = get_user_code(user_id)
     if not code:
-        await tgt.answer("Сначала получите личный код: нажмите «🔑 Получить код».", reply_markup=get_main_menu_inline())
+        await tgt.answer("Сначала получите личный код: нажмите «🔑 Получить код».", reply_markup=get_main_menu_reply())
         return
 
     await tgt.answer(CHINA_WAREHOUSE_ADDRESS.format(client_code=code), parse_mode="HTML")
-    await tgt.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+    await tgt.answer("Выберите действие:", reply_markup=get_main_menu_reply())
 
 
 @dp.callback_query_handler(lambda c: c.data == "menu_mytracks", state="*")
@@ -213,13 +224,13 @@ async def menu_mytracks(cb_or_msg, state: FSMContext):
 
     code = get_user_code(user_id)
     if not code:
-        await tgt.answer("Сначала получите личный код: нажмите «🔑 Получить код».", reply_markup=get_main_menu_inline())
+        await tgt.answer("Сначала получите личный код: нажмите «🔑 Получить код».", reply_markup=get_main_menu_reply())
         return
 
     tracks = get_tracks(user_id)
     text = f"🔑 Ваш код клиента: <code>{code}</code>\n\n" + ("📦 Ваши трек-коды:\n\n" + format_tracks(tracks) if tracks else "Пока нет зарегистрированных трек-кодов")
     await tgt.answer(text, parse_mode="HTML")
-    await tgt.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+    await tgt.answer("Выберите действие:", reply_markup=get_main_menu_reply())
 
 
 @dp.callback_query_handler(lambda c: c.data == "menu_manager", state="*")
@@ -236,7 +247,7 @@ async def menu_manager(cb_or_msg, state: FSMContext):
 
     code = get_user_code(user.id)
     if not code:
-        await tgt.answer("Сначала получите личный код: нажмите «🔑 Получить код».", reply_markup=get_main_menu_inline())
+        await tgt.answer("Сначала получите личный код: нажмите «🔑 Получить код».", reply_markup=get_main_menu_reply())
         return
 
     full_name = user.full_name or ""
@@ -253,7 +264,7 @@ async def menu_manager(cb_or_msg, state: FSMContext):
             await bot.send_message(MANAGER_ID, text, parse_mode="HTML")
         except Exception as e:
             logger.exception("Failed to notify manager: %s", e)
-    await tgt.answer("✅ Сообщение менеджеру отправлено. Ожидайте контакт.", reply_markup=get_main_menu_inline())
+    await tgt.answer("✅ Сообщение менеджеру отправлено. Ожидайте контакт.", reply_markup=get_main_menu_reply())
 
 
 @dp.callback_query_handler(lambda c: c.data == "menu_buy", state="*")
@@ -270,7 +281,7 @@ async def menu_buy(cb_or_msg, state: FSMContext):
 
     code = get_user_code(user_id)
     if not code:
-        await tgt.answer("Сначала получите личный код: нажмите «🔑 Получить код».", reply_markup=get_main_menu_inline())
+        await tgt.answer("Сначала получите личный код: нажмите «🔑 Получить код».", reply_markup=get_main_menu_reply())
         return
 
     await tgt.answer("🛒 Что вы хотите заказать и в каком количестве? Ответьте одним сообщением.\nДля отмены — /cancel")
@@ -341,7 +352,7 @@ async def menu_sendtrack(cb_or_msg, state: FSMContext):
 async def cmd_cancel(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("❌ Действие отменено.")
-    await message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+    await message.answer("Выберите действие:", reply_markup=get_main_menu_reply())
 
 
 @dp.message_handler(state=TrackStates.waiting_for_track, content_types=ContentType.TEXT)
@@ -371,7 +382,7 @@ async def choose_delivery(callback: CallbackQuery, state: FSMContext):
     if callback.data == "delivery_cancel":
         await state.finish()
         await callback.message.edit_text("❌ Добавление трека отменено")
-        await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+        await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_reply())
         return
 
     delivery_key = callback.data.replace("delivery_", "")
@@ -405,7 +416,7 @@ async def confirm_track(callback: CallbackQuery, state: FSMContext):
     if not code:
         await state.finish()
         await callback.message.edit_text("Сначала получите личный код: нажмите «🔑 Получить код».")
-        await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+        await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_reply())
         return
 
     data = await state.get_data()
@@ -441,7 +452,7 @@ async def confirm_track(callback: CallbackQuery, state: FSMContext):
         "📚 История ваших треков обновлена.",
         parse_mode="HTML",
     )
-    await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+    await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_reply())
 
 
 @dp.callback_query_handler(lambda c: c.data == "menu_photokontrol", state="*")
@@ -458,7 +469,7 @@ async def menu_photokontrol(cb_or_msg, state: FSMContext):
 
     code = get_user_code(user_id)
     if not code:
-        await tgt.answer("Сначала получите личный код: нажмите «🔑 Получить код».", reply_markup=get_main_menu_inline())
+        await tgt.answer("Сначала получите личный код: нажмите «🔑 Получить код».", reply_markup=get_main_menu_reply())
         return
 
     user_tracks = get_tracks(user_id)
@@ -466,6 +477,11 @@ async def menu_photokontrol(cb_or_msg, state: FSMContext):
         await tgt.answer("📦 Ваши треки:\n\n" + format_tracks(user_tracks), parse_mode="HTML")
     await tgt.answer("📷 Отправьте трек-код, чтобы получить фото. Для отмены — /cancel")
     await PhotoStates.waiting_for_track.set()
+
+
+@dp.message_handler(lambda m: (m.text or "").strip() == "📷 Фотоконтроль", state="*")
+async def menu_photokontrol_reply_button(message: types.Message, state: FSMContext):
+    await menu_photokontrol(message, state)
 
 
 @dp.message_handler(state=PhotoStates.waiting_for_track, content_types=ContentType.TEXT)
@@ -487,7 +503,7 @@ async def handle_photo_request(message: types.Message, state: FSMContext):
             f"📭 Фото по треку <code>{track}</code> пока не загружены.",
             parse_mode="HTML",
         )
-        await message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+        await message.answer("Выберите действие:", reply_markup=get_main_menu_reply())
         return
 
     # Отправляем все фото пользователю
@@ -502,7 +518,7 @@ async def handle_photo_request(message: types.Message, state: FSMContext):
 
     await state.finish()
     await message.answer("✅ Все доступные фото отправлены.")
-    await message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+    await message.answer("Выберите действие:", reply_markup=get_main_menu_reply())
 
 
 @dp.message_handler(content_types=[ContentType.PHOTO], state="*")
@@ -553,7 +569,7 @@ async def warehouse_photo_upload(message: types.Message, state: FSMContext):
 
 @dp.message_handler()
 async def fallback(message: types.Message):
-    await message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+    await message.answer("Выберите действие:", reply_markup=get_main_menu_reply())
 
 
 async def on_startup(dp: Dispatcher):
