@@ -75,12 +75,25 @@ function render() {
         <div style="display:flex; gap: 8px; margin-top: 12px">
           <button id="btnAdd" style="padding:8px 12px">Добавить трек</button>
           <button id="btnClr" style="padding:8px 12px">Очистить</button>
+          <button id="btnMgr" style="padding:8px 12px; background:#2b74e4; color:#fff">Связаться с менеджером</button>
         </div>
       ` : ''}
     </div>
   `
   document.getElementById('btnAdd')?.addEventListener('click', addTrack)
   document.getElementById('btnClr')?.addEventListener('click', clearTracks)
+  document.getElementById('btnMgr')?.addEventListener('click', async () => {
+    const text = prompt('Коротко опишите вопрос для менеджера (необязательно)') || ''
+    try {
+      setLoading(true)
+      const res = await callApi('post', '/api/manager', { text })
+      if (res?.ok) alert('Запрос отправлен менеджеру')
+    } catch (e) {
+      setError(e?.response?.data?.detail || 'Не удалось отправить запрос')
+    } finally {
+      setLoading(false)
+    }
+  })
 }
 
 render()

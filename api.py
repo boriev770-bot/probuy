@@ -29,6 +29,7 @@ except Exception:
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 MANAGER_ID = int(os.getenv("MANAGER_ID", "0") or 0)
 WAREHOUSE_ID = int(os.getenv("WAREHOUSE_ID", "0") or 0)
+DEV_MODE = os.getenv("DEV_MODE", "").lower() in ("1", "true", "yes", "dev")
 
 def _compute_webapp_secret_key(bot_token: str) -> bytes:
     return hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()
@@ -59,6 +60,9 @@ async def tg_user_dep(
     request: Request,
     x_telegram_init_data: Optional[str] = Header(None, convert_underscores=True),
 ) -> Dict[str, Any]:
+    if DEV_MODE:
+        # Упрощенный вход в режиме разработки
+        return {"id": 1, "first_name": "Dev", "username": "devuser"}
     if not BOT_TOKEN:
         raise HTTPException(status_code=500, detail="BOT_TOKEN is not set")
     init_data = x_telegram_init_data or request.query_params.get("init_data") or request.query_params.get("initData")
