@@ -1,1 +1,1 @@
-web: sh -c "uvicorn api:app --host 0.0.0.0 --port $PORT & python -u /app/bot.py"
+web: sh -c "WEBAPP_URL=\"${WEBAPP_URL:-${RENDER_EXTERNAL_URL:-${PUBLIC_URL:-${VERCEL_URL:-${RAILWAY_PUBLIC_DOMAIN:-}}}}}\"; if [ -n \"$WEBAPP_URL\" ] && [ \"${WEBAPP_URL#http}\" = \"$WEBAPP_URL\" ]; then WEBAPP_URL=\"https://$WEBAPP_URL\"; fi; export WEBAPP_URL; uvicorn api:app --host 0.0.0.0 --port $PORT & python -u /app/bot.py"

@@ -35,7 +35,29 @@ logger = logging.getLogger("china_warehouse_bot")
 logger.info("RUNNING FILE: %s", os.path.abspath(__file__))
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBAPP_URL = os.getenv("WEBAPP_URL", "").strip()
+
+def _resolve_webapp_url() -> str:
+	# Priority: explicit WEBAPP_URL, then common hosting envs
+	candidates = [
+		(os.getenv("WEBAPP_URL", "").strip()),
+		(os.getenv("PUBLIC_URL", "").strip()),
+		(os.getenv("RENDER_EXTERNAL_URL", "").strip()),
+		(os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()),
+		(os.getenv("VERCEL_URL", "").strip()),
+	]
+	# Compose from FLY_APP_NAME if others are empty
+	fly_name = (os.getenv("FLY_APP_NAME", "").strip())
+	if fly_name and not any(candidates):
+		candidates.append(f"{fly_name}.fly.dev")
+	for url in candidates:
+		if not url:
+			continue
+		if not (url.startswith("http://") or url.startswith("https://")):
+			url = f"https://{url}"
+		return url
+	return ""
+
+WEBAPP_URL = _resolve_webapp_url()
 MANAGER_ID = int(os.getenv("MANAGER_ID", "7095008192") or 7095008192)
 WAREHOUSE_ID = int(os.getenv("WAREHOUSE_ID", "7095008192") or 7095008192)
 
@@ -102,6 +124,8 @@ def get_main_menu_reply() -> ReplyKeyboardMarkup:
 	kb.row(KeyboardButton("🚚 Отправить трек"), KeyboardButton("📦 Мои треки"))
 	kb.row(KeyboardButton("📷 Фотоконтроль"))
 	kb.row(KeyboardButton("🧹 Очистить историю"))
+	if WEBAPP_URL:
+		kb.row(KeyboardButton("🧩 Открыть Mini App", web_app=types.WebAppInfo(url=WEBAPP_URL)))
 	return kb
 
 
