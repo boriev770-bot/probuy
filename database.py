@@ -114,34 +114,43 @@ else:
             _pool = SimpleConnectionPool(minconn=1, maxconn=10, dsn=DATABASE_URL)
         return _pool
 
-    def _execute(query: str, params: tuple = ()) -> None:
+    def _execute(query: str, params: Optional[tuple] = None) -> None:
         pool = _get_pool()
         conn = pool.getconn()
         try:
             with conn:
                 with conn.cursor() as cur:
-                    cur.execute(query, params)
+                    if params is None:
+                        cur.execute(query)
+                    else:
+                        cur.execute(query, params)
         finally:
             pool.putconn(conn)
 
-    def _fetchone(query: str, params: tuple = ()) -> Optional[tuple]:
+    def _fetchone(query: str, params: Optional[tuple] = None) -> Optional[tuple]:
         pool = _get_pool()
         conn = pool.getconn()
         try:
             with conn:
                 with conn.cursor() as cur:
-                    cur.execute(query, params)
+                    if params is None:
+                        cur.execute(query)
+                    else:
+                        cur.execute(query, params)
                     return cur.fetchone()
         finally:
             pool.putconn(conn)
 
-    def _fetchall(query: str, params: tuple = ()) -> List[tuple]:
+    def _fetchall(query: str, params: Optional[tuple] = None) -> List[tuple]:
         pool = _get_pool()
         conn = pool.getconn()
         try:
             with conn:
                 with conn.cursor() as cur:
-                    cur.execute(query, params)
+                    if params is None:
+                        cur.execute(query)
+                    else:
+                        cur.execute(query, params)
                     return cur.fetchall()
         finally:
             pool.putconn(conn)
