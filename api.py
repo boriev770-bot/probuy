@@ -20,6 +20,7 @@ from database import (
     get_track_photos,
     delete_all_user_tracks,
     init_db,
+    find_user_ids_by_track,
 )
 
 try:
@@ -188,6 +189,54 @@ async def notify_manager(req: ManagerRequest, user=Depends(tg_user_dep)):
     finally:
         await bot.session.close()
     return {"ok": True, "sent": True}
+
+class ParcelArrivedRequest(BaseModel):
+    tracking: str
+
+@app.post("/events/parcel-arrived")
+async def parcel_arrived(req: ParcelArrivedRequest, user=Depends(tg_user_dep)):
+    if not BOT_TOKEN or Bot is None:
+        raise HTTPException(status_code=500, detail="Bot not available for notifications")
+    user_id = int(user.get("id"))
+    # Только администраторы (склад/менеджер) могут подтверждать прибытие
+    admin_ids = {i for i in [MANAGER_ID, WAREHOUSE_ID] if i}
+    if user_id not in admin_ids:
+        raise HTTPException(status_code=403, detail="Not allowed")
+
+    tracking = (req.tracking or "").strip().upper()
+    if not tracking or len(tracking) < 8 or len(tracking) > 40 or not all(c.isalnum() and c.upper() == c for c in tracking):
+        raise HTTPException(status_code=400, detail="Invalid track format")
+
+    target_user_ids = find_user_ids_by_track(tracking)
+    if not target_user_ids:
+        return {"ok": True, "notified": 0}
+
+    bot = Bot(token=BOT_TOKEN)
+    sent = 0
+    try:
+        text = f"\ud83d\udce6 \u0412\u0430\u0448\u0430 \u043f\u043e\u0441\u044b\u043b\u043a\u0430 <code>{tracking}</code> \u043f\u0440\u0438\u0431\u044b\u043b\u0430 \u043d\u0430 \u0441\u043a\u043b\u0430\u0434."
+        for uid in set(target_user_ids):
+            try:
+                await bot.send_message(uid, text, parse_mode="HTML")
+                sent += 1
+            except Exception:
+                # пропускаем недоставляемые
+                pass
+    finally:
+        await bot.session.close()
+    return {"ok": True, "notified": sent}
+
+@app.get("/scan")
+async def serve_scan_page():
+    base_dir = os.path.dirname(__file__)
+    # приоритет dist, затем исходники
+    cand_dist = os.path.join(base_dir, "web", "dist", "scan.html")
+    cand_src = os.path.join(base_dir, "web", "scan.html")
+    if os.path.isfile(cand_dist):
+        return FileResponse(cand_dist)
+    if os.path.isfile(cand_src):
+        return FileResponse(cand_src)
+    raise HTTPException(status_code=404, detail="scan.html not found")
 
 @app.post("/api/buy")
 async def buy_request(req: BuyRequest, user=Depends(tg_user_dep)):
