@@ -693,16 +693,36 @@ async def admin_findtracks(message: types.Message, state: FSMContext):
 	if not user_id:
 		await message.answer(f"Пользователь с кодом <code>{code}</code> не найден.", parse_mode="HTML")
 		return
+	# Получаем данные пользователя из Telegram
+	full_name = "—"
+	username = "не указан"
+	try:
+		chat = await bot.get_chat(user_id)
+		first_name = getattr(chat, "first_name", None) or ""
+		last_name = getattr(chat, "last_name", None) or ""
+		full_name = (f"{first_name} {last_name}").strip() or "—"
+		if getattr(chat, "username", None):
+			username = f"@{chat.username}"
+	except Exception:
+		pass
+
 	tracks = get_tracks(user_id)
+	user_block = (
+		"🧑‍💼 Данные клиента\n\n"
+		f"🆔 Код клиента: <code>{code}</code>\n"
+		f"👤 Имя: {full_name}\n"
+		f"📱 Username: {username}\n"
+		f"🆔 Telegram ID: <code>{user_id}</code>\n"
+	)
 	if not tracks:
 		await message.answer(
-			f"У пользователя <code>{code}</code> нет зарегистрированных треков.",
+			user_block + "\nУ пользователя нет зарегистрированных треков.",
 			parse_mode="HTML",
 		)
 		return
 	text = (
-		f"🧑‍💼 Запрос по клиенту <code>{code}</code> (user_id={user_id}):\n\n"
-		+ "📦 Треки:\n\n"
+		user_block
+		+ "\n📦 Треки:\n\n"
 		+ format_tracks(tracks)
 	)
 	await message.answer(text, parse_mode="HTML")
