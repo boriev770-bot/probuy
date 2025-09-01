@@ -874,6 +874,16 @@ async def warehouse_photo_upload(message: types.Message, state: FSMContext):
 	if message.from_user.id != WAREHOUSE_ID:
 		return
 
+	# Если сейчас идет сессия отправки груза (/shipped),
+	# не пытаемся распознавать трек из подписи и не отвечаем ошибкой
+	# — фото будут обработаны специализированным хендлером для /shipped
+	current_state = await state.get_state()
+	if current_state in {
+		AdminShipmentStates.waiting_for_media.state,
+		AdminShipmentStates.waiting_for_cargo_code.state,
+	}:
+		return
+
 	# Пытаемся извлечь трек из подписи к фото или из реплая
 	track = extract_track_from_text(message.caption)
 	if not track and message.reply_to_message:
