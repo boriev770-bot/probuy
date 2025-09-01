@@ -246,14 +246,14 @@ def extract_cargo_code(text: Optional[str]) -> Optional[str]:
 	if not text:
 		return None
 	raw = (text or "").strip().upper()
-	# Ожидаем формат EM03-00001
-	m = re.search(r"\bEM\d{2}-\d{5}\b", raw)
+	# Ожидаем полный номер груза: EM03-00001-1
+	m = re.search(r"\bEM\d{2}-\d{5}-\d+\b", raw)
 	if m:
 		return m.group(0)
-	# Попытка нормализации EM03 00001 -> EM03-00001
-	m = re.search(r"\b(EM\d{2})\D*(\d{5})\b", raw)
+	# Попытка нормализации: EM03 00001 1 или EM03-00001 1 -> EM03-00001-1
+	m = re.search(r"\b(EM\d{2})\D*(\d{5})\D*(\d+)\b", raw)
 	if m:
-		return f"{m.group(1)}-{m.group(2)}"
+		return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
 	return None
 
 
@@ -923,7 +923,7 @@ async def admin_shipped_start(message: types.Message, state: FSMContext):
 	args = (message.get_args() or "").strip()
 	cargo_code = extract_cargo_code(args)
 	if not cargo_code:
-		await message.answer("Укажите номер груза, например: /shipped EM03-00001")
+		await message.answer("Укажите номер груза, например: /shipped EM03-00001-1")
 		return
 	user_id = get_user_id_by_cargo_code(cargo_code)
 	if not user_id:
