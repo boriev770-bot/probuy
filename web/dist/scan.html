@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Сканер — Probuy</title>
+    <style>
+      body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,"Noto Sans","Apple Color Emoji","Segoe UI Emoji"}
+      .wrap{padding:16px}
+      .title{font-size:20px;font-weight:700;margin:0 0 8px}
+      .muted{opacity:.7;font-size:14px;margin-bottom:12px}
+      video{width:100%;max-height:50vh;background:#000;border-radius:12px}
+      .field{margin:12px 0}
+      .input{width:100%;padding:12px;border:1px solid #d1d5db;border-radius:10px;font-size:16px}
+      .btn{padding:10px 14px;border-radius:10px;border:1px solid #d1d5db;background:#fff;cursor:pointer}
+      .btn.primary{background:#16a34a;color:white;border-color:#16a34a}
+      .row{display:flex;gap:8px;align-items:center}
+      .banner{margin:12px 0;padding:12px;border:1px solid #d1d5db;border-radius:10px}
+      .ok{color:#16a34a}
+      .err{color:#dc2626}
+      .chip{display:inline-block;border:1px solid #d1d5db;border-radius:8px;padding:4px 8px;margin:6px 6px 0 0}
+    </style>
+    <script type="module" crossorigin src="/assets/scan-CWv-rZW5.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/modulepreload-polyfill-B5Qt9EMX.js">
+  </head>
+  <body>
+    <div class="wrap">
+      <h1 class="title">Сканирование трек‑кодов</h1>
+      <div class="muted">Наведите камеру на штрих‑код/QR или введите код вручную.</div>
+
+      <video id="preview" playsinline></video>
+
+      <div class="field">
+        <input id="manualInput" class="input" placeholder="Ввести трек вручную" />
+      </div>
+      <div class="row">
+        <button id="btnSend" class="btn primary">Подтвердить прибытие</button>
+        <button id="btnStop" class="btn">Пауза камеры</button>
+      </div>
+      <div id="lastWrap" class="banner">Последний код: <span id="last">—</span></div>
+      <div id="log"></div>
+    </div>
+
+  </body>
+  </html>
+
