@@ -454,7 +454,7 @@ async def clear_history_confirm(callback: CallbackQuery, state: FSMContext):
 	await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
 
 
-@dp.message_handler(state=TrackStates.waiting_for_track, content_types=ContentType.TEXT)
+@dp.message_handler(state=TrackStates.waiting_for_track, content_types=[ContentType.TEXT])
 async def handle_track_input(message: types.Message, state: FSMContext):
 	code = await require_code_or_hint(message)
 	if not code:
@@ -587,7 +587,7 @@ async def menu_photokontrol_reply_button(message: types.Message, state: FSMConte
 	await menu_photokontrol(message, state)
 
 
-@dp.message_handler(state=PhotoStates.waiting_for_track, content_types=ContentType.TEXT)
+@dp.message_handler(state=PhotoStates.waiting_for_track, content_types=[ContentType.TEXT])
 async def handle_photo_request(message: types.Message, state: FSMContext):
 	code = await require_code_or_hint(message)
 	if not code:
