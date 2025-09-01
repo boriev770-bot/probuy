@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Сканер — Probuy</title>
+    <style>
+      body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,"Noto Sans","Apple Color Emoji","Segoe UI Emoji"}
+      .wrap{padding:16px}
+      .title{font-size:20px;font-weight:700;margin:0 0 8px}
+      .muted{opacity:.7;font-size:14px;margin-bottom:12px}
+      video{width:100%;max-height:50vh;background:#000;border-radius:12px}
+      .field{margin:12px 0}
+      .input{width:100%;padding:12px;border:1px solid #d1d5db;border-radius:10px;font-size:16px}
+      .btn{padding:10px 14px;border-radius:10px;border:1px solid #d1d5db;background:#fff;cursor:pointer}
+      .btn.primary{background:#16a34a;color:white;border-color:#16a34a}
+      .row{display:flex;gap:8px;align-items:center}
+      .banner{margin:12px 0;padding:12px;border:1px solid #d1d5db;border-radius:10px}
+      .ok{color:#16a34a}
+      .err{color:#dc2626}
+      .chip{display:inline-block;border:1px solid #d1d5db;border-radius:8px;padding:4px 8px;margin:6px 6px 0 0}
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1 class="title">Сканирование трек‑кодов</h1>
+      <div class="muted">Наведите камеру на штрих‑код/QR или введите код вручную.</div>
+
+      <video id="preview" playsinline></video>
+
+      <div class="field">
+        <input id="manualInput" class="input" placeholder="Ввести трек вручную" />
+      </div>
+      <div class="row">
+        <button id="btnSend" class="btn primary">Подтвердить прибытие</button>
+        <button id="btnStop" class="btn">Пауза камеры</button>
+      </div>
+      <div id="lastWrap" class="banner">Последний код: <span id="last">—</span></div>
+      <div id="log"></div>
+    </div>
+
+    <script type="module">
+      import { BrowserMultiFormatReader } from 'https://cdn.jsdelivr.net/npm/@zxing/browser@latest/+esm'
+      const tg = window.Telegram?.WebApp
+      tg?.ready?.(); tg?.expand?.()
+
+      const video = document.getElementById('preview')
+      const input = document.getElementById('manualInput')
+      const btnSend = document.getElementById('btnSend')
+      const btnStop = document.getElementById('btnStop')
+      const lastEl = document.getElementById('last')
+      const logEl = document.getElementById('log')
+
+      let lastCode = ''
+      function setLast(code){ lastCode = code; lastEl.textContent = code }
+      function log(msg, ok){
+        const div = document.createElement('div')
+        div.className = 'chip ' + (ok ? 'ok' : 'err')
+        div.textContent = msg
+        logEl.prepend(div)
+      }
+
+      const reader = new BrowserMultiFormatReader()
+      let active = true
+      await reader.decodeFromVideoDevice(null, video, (result, err) => {
+        if (!active) return
+        if (result) {
+          const code = (result.getText() || '').trim()
+          if (code && code !== lastCode) {
+            setLast(code)
+            input.value = code
+            tg?.HapticFeedback?.notificationOccurred?.('success')
+          }
+        }
+      })
+
+      btnStop.addEventListener('click', () => {
+        active = !active
+        btnStop.textContent = active ? 'Пауза камеры' : 'Продолжить сканирование'
+      })
+
+      async function callApi(method, url, data){
+        const base = ''
+        const initData = tg?.initData || new URLSearchParams(location.search).get('init_data') || ''
+        const headers = { 'X-Telegram-Init-Data': initData, 'Content-Type': 'application/json' }
+        const res = await fetch(base + url, { method, headers, body: data ? JSON.stringify(data) : undefined })
+        if (!res.ok) throw new Error((await res.json()).detail || 'Request failed')
+        return res.json()
+      }
+
+      async function submit(trk){
+        const tracking = (trk || input.value || '').trim().toUpperCase()
+        if (!tracking) { log('Введите код', false); return }
+        try {
+          const data = await callApi('POST', '/events/parcel-arrived', { tracking })
+          log(`OK: ${tracking} (${data.notified||0})`, true)
+          setLast(tracking)
+          input.value = ''
+        } catch(e){
+          log(e.message || 'Ошибка', false)
+        }
+      }
+
+      btnSend.addEventListener('click', () => submit())
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); submit() }
+      })
+
+      if (tg) {
+        tg.MainButton.setParams({ text: 'Подтвердить прибытие' })
+        tg.MainButton.onClick(() => submit())
+        tg.MainButton.show()
+      }
+    </script>
+  </body>
+  </html>
+
