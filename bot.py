@@ -65,10 +65,9 @@ if not BOT_TOKEN:
 	raise RuntimeError("BOT_TOKEN is not set")
 
 CHINA_WAREHOUSE_ADDRESS = (
-	"🏭 <b>АДРЕС СКЛАДА В КИТАЕ</b>\n\n"
-	"⬇️ ВСТАВЬТЕ НИЖЕ ВАШ РЕАЛЬНЫЙ АДРЕС СКЛАДА (замените этот текст) ⬇️\n"
-	"<i>Пример формата: Китай, провинция ..., г. ..., район ..., ул. ..., склад №...</i>\n\n"
-	"🔑 <b>ВАШ ЛИЧНЫЙ КОД КЛИЕНТА:</b> <code>{client_code}</code>\n"
+	"张生生{client_code}\n"
+	"16604524466 \n"
+	"广东省 佛山市 南海区 里水镇 东秀路 河塱沙5号 一楼仓库EM00-ХХХХХ"
 )
 
 bot = Bot(token=BOT_TOKEN)

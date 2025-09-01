@@ -11,19 +11,42 @@ if DEV_MODE:
     _next_track_id: int = 1
 
     def init_db() -> None:
-        pass
+        # Миграция кодов в новый формат EM03-xxxxx
+        global _users
+        if not _users:
+            return
+        migrated: dict[int, str] = {}
+        for uid, code in list(_users.items()):
+            if not code:
+                continue
+            if code.startswith("EM03-"):
+                migrated[uid] = code
+                continue
+            # PBxxxxx -> EM03-xxxxx
+            if code.startswith("PB") and len(code) >= 7 and code[2:].isdigit():
+                migrated[uid] = f"EM03-{int(code[2:]):05d}"
+                continue
+            # Попробуем извлечь числовую часть и нормализовать
+            digits = "".join(ch for ch in code if ch.isdigit())
+            if digits:
+                migrated[uid] = f"EM03-{int(digits):05d}"
+            else:
+                migrated[uid] = code
+        if migrated:
+            _users.clear()
+            _users.update(migrated)
 
     def _generate_next_code() -> str:
         max_num = 0
         for code in _users.values():
             try:
-                if code and code.startswith("PB"):
-                    num = int(code[2:])
+                if code and code.startswith("EM03-"):
+                    num = int(code.split("-", 1)[1])
                     if num > max_num:
                         max_num = num
             except Exception:
                 continue
-        return f"PB{max_num + 1:05d}"
+        return f"EM03-{max_num + 1:05d}"
 
     def get_user_code(user_id: int) -> Optional[str]:
         return _users.get(user_id)
@@ -155,26 +178,36 @@ else:
             )
             """
         )
+        # Миграция: PBxxxxx -> EM03-xxxxx
+        _execute(
+            """
+            UPDATE users
+            SET code = 'EM03-' || LPAD(REGEXP_REPLACE(code, '\\D', '', 'g'), 5, '0')
+            WHERE code IS NOT NULL
+              AND code NOT LIKE 'EM03-%'
+              AND REGEXP_REPLACE(code, '\\D', '', 'g') <> ''
+            """
+        )
 
     def get_user_code(user_id: int) -> Optional[str]:
         row = _fetchone("SELECT code FROM users WHERE user_id=%s", (user_id,))
         return row[0] if row else None
 
     def _generate_next_code_tx(cur) -> str:
-        # Берем все коды PB, находим максимальный номер и увеличиваем
-        cur.execute("SELECT code FROM users WHERE code LIKE 'PB%'")
+        # Берем все коды EM03-xxxxx, находим максимальный номер и увеличиваем
+        cur.execute("SELECT code FROM users WHERE code LIKE 'EM03-%'")
         rows = cur.fetchall()
         max_num = 0
         for (code,) in rows:
             try:
-                if code and code.startswith("PB"):
-                    num = int(code[2:])
+                if code and code.startswith("EM03-"):
+                    num = int(code.split('-', 1)[1])
                     if num > max_num:
                         max_num = num
             except Exception:
                 continue
         next_num = max_num + 1
-        return f"PB{next_num:05d}"
+        return f"EM03-{next_num:05d}"
 
     def get_or_create_user_code(user_id: int) -> str:
         pool = _get_pool()
