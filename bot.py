@@ -97,6 +97,7 @@ class PhotoStates(StatesGroup):
 
 class CargoStates(StatesGroup):
 	waiting_for_recipient = State()
+	choosing_delivery = State()
 	confirming = State()
 
 
@@ -455,11 +456,12 @@ async def menu_sendcargo(callback: CallbackQuery, state: FSMContext):
 			f"👤 Получатель: {fio}\n"
 			f"📞 Телефон: {phone}\n"
 			f"🏙️ Город доставки: {city}\n\n"
-			"📚 Зарегистрированные треки:\n" + (format_tracks(tracks) if tracks else "Нет зарегистрированных трек-кодов")
+			"📚 Зарегистрированные треки:\n" + (format_tracks(tracks) if tracks else "Нет зарегистрированных трек-кодов") + "\n\n"
+			"Выберите тип доставки:"
 		)
-		await callback.message.answer(text, parse_mode="HTML", reply_markup=cargo_confirm_keyboard())
-		await CargoStates.confirming.set()
 		await state.update_data(fio=fio, phone=phone, city=city)
+		await CargoStates.choosing_delivery.set()
+		await callback.message.answer(text, parse_mode="HTML", reply_markup=delivery_keyboard())
 		return
 
 	await callback.message.answer(
@@ -494,10 +496,11 @@ async def handle_recipient_input(message: types.Message, state: FSMContext):
 		f"👤 Получатель: {fio}\n"
 		f"📞 Телефон: {phone}\n"
 		f"🏙️ Город доставки: {city}\n\n"
-		"📚 Зарегистрированные треки:\n" + (format_tracks(tracks) if tracks else "Нет зарегистрированных трек-кодов")
+		"📚 Зарегистрированные треки:\n" + (format_tracks(tracks) if tracks else "Нет зарегистрированных трек-кодов") + "\n\n"
+		"Выберите тип доставки:"
 	)
-	await CargoStates.confirming.set()
-	await message.answer(text, parse_mode="HTML", reply_markup=cargo_confirm_keyboard())
+	await CargoStates.choosing_delivery.set()
+	await message.answer(text, parse_mode="HTML", reply_markup=delivery_keyboard())
 
 
 @dp.callback_query_handler(lambda c: c.data == "menu_clearhistory", state="*")
@@ -564,13 +567,20 @@ async def handle_track_input(message: types.Message, state: FSMContext):
 		await message.answer("⚠️ Неверный формат трек-кода. Пришлите другой или /cancel")
 		return
 
-	await state.update_data(track=track)
-	await TrackStates.choosing_delivery.set()
+	# Сохраняем трек без выбора доставки. Доставку уточним при оформлении груза.
+	try:
+		add_track(message.from_user.id, track, "")
+	except Exception as e:
+		logger.exception("Failed to save track: %s", e)
+		await message.answer("❌ Ошибка сохранения трека. Попробуйте позже.")
+		return
+	await state.finish()
 	await message.answer(
-		f"✅ Трек-код принят: <code>{track}</code>\n\nВыберите тип доставки:",
+		f"✅ Трек-код зарегистрирован: <code>{track}</code>\n\n"
+		"Когда будете готовы отправить груз, нажмите «📤 Отправить груз». Все ваши треки будут переданы складу одним сообщением.",
 		parse_mode="HTML",
-		reply_markup=delivery_keyboard(),
 	)
+	await message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
 
 
 @dp.callback_query_handler(lambda c: c.data.startswith("delivery_"), state=TrackStates.choosing_delivery)
@@ -618,35 +628,19 @@ async def confirm_track(callback: CallbackQuery, state: FSMContext):
 
 	data = await state.get_data()
 	track = data["track"]
-	delivery_key = data["delivery"]
-	delivery_name = DELIVERY_TYPES.get(delivery_key, {}).get("name", "Не указано")
-
-	add_track(user_id, track, delivery_name)
-
-	tracks = get_tracks(user_id)
-	full_name = callback.from_user.full_name or ""
-	username = f"@{callback.from_user.username}" if callback.from_user.username else "не указан"
-
-	if WAREHOUSE_ID:
-		try:
-			text = (
-				"📦 <b>НОВЫЙ ТРЕК-КОД</b>\n\n"
-				f"🆔 Код клиента: <code>{code}</code>\n"
-				f"👤 Имя: {full_name}\n"
-				f"📱 Username: {username}\n"
-				f"🆔 Telegram ID: <code>{user_id}</code>\n\n"
-				f"📋 Трек: <code>{track}</code>\n"
-				f"🚚 Доставка: {delivery_name}\n\n"
-				"📚 Все треки пользователя:\n" + format_tracks(tracks)
-			)
-			await bot.send_message(WAREHOUSE_ID, text, parse_mode="HTML")
-		except Exception as e:
-			logger.exception("Failed to notify warehouse: %s", e)
+	# Регистрируем трек без выбора способа доставки; отправка на склад будет при оформлении груза
+	try:
+		add_track(user_id, track, "")
+	except Exception as e:
+		logger.exception("Failed to save track: %s", e)
+		await state.finish()
+		await callback.message.edit_text("❌ Ошибка сохранения трека. Попробуйте позже.")
+		await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+		return
 
 	await state.finish()
 	await callback.message.edit_text(
-		"✅ Трек-код зарегистрирован и передан сотруднику склада.\n\n"
-		"📚 История ваших треков обновлена.",
+		"✅ Трек-код зарегистрирован. Он будет передан сотруднику склада в составе вашей заявки на отправку груза.",
 		parse_mode="HTML",
 	)
 	await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
@@ -754,6 +748,8 @@ async def confirm_cargo(callback: CallbackQuery, state: FSMContext):
 
     data = await state.get_data()
     fio, phone, city = data.get("fio", ""), data.get("phone", ""), data.get("city", "")
+    delivery_key = data.get("delivery")
+    delivery_name = DELIVERY_TYPES.get(delivery_key, {}).get("name", "Не указано") if delivery_key else "Не указано"
     set_recipient(user_id, fio, phone, city)
 
     tracks = get_tracks(user_id)
@@ -770,6 +766,15 @@ async def confirm_cargo(callback: CallbackQuery, state: FSMContext):
 
     full_name = callback.from_user.full_name or ""
     username = f"@{callback.from_user.username}" if callback.from_user.username else "не указан"
+    # Список треков без дубликатов
+    seen = set()
+    unique_track_lines = []
+    for idx, (t, _d) in enumerate([(t, d) for (t, d) in tracks], start=1):
+        if t in seen:
+            continue
+        seen.add(t)
+        unique_track_lines.append(f"{len(seen)}. <code>{t}</code>")
+
     text = (
         "📦 <b>ЗАЯВКА НА ОТПРАВКУ ГРУЗА</b>\n\n"
         f"🆔 Код клиента: <code>{code}</code>\n"
@@ -779,8 +784,9 @@ async def confirm_cargo(callback: CallbackQuery, state: FSMContext):
         f"🆔 Telegram ID: <code>{user_id}</code>\n\n"
         f"👤 Получатель: {fio}\n"
         f"📞 Телефон: {phone}\n"
-        f"🏙️ Город доставки: {city}\n\n"
-        "📚 Треки клиента:\n" + (format_tracks(tracks) if tracks else "Нет зарегистрированных трек-кодов")
+        f"🏙️ Город доставки: {city}\n"
+        f"🚚 Способ доставки: {delivery_name}\n\n"
+        "📚 Треки клиента:\n" + ("\n".join(unique_track_lines) if unique_track_lines else "Нет зарегистрированных трек-кодов")
     )
     if WAREHOUSE_ID:
         try:
@@ -796,6 +802,46 @@ async def confirm_cargo(callback: CallbackQuery, state: FSMContext):
     )
     await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
 
+@dp.callback_query_handler(lambda c: c.data.startswith("delivery_"), state=CargoStates.choosing_delivery)
+async def choose_cargo_delivery(callback: CallbackQuery, state: FSMContext):
+    await bot.answer_callback_query(callback.id)
+    if callback.data == "delivery_cancel":
+        await state.finish()
+        await callback.message.edit_text("❌ Оформление отправки отменено")
+        await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+        return
+
+    delivery_key = callback.data.replace("delivery_", "")
+    delivery_name = DELIVERY_TYPES.get(delivery_key, {}).get("name", "Не указано")
+    await state.update_data(delivery=delivery_key)
+
+    data = await state.get_data()
+    user_id = callback.from_user.id
+    code = get_user_code(user_id) or "—"
+    fio, phone, city = data.get("fio", ""), data.get("phone", ""), data.get("city", "")
+    tracks = get_tracks(user_id)
+
+    # Список треков без дубликатов
+    seen = set()
+    unique_track_lines = []
+    for (t, _d) in tracks:
+        if t in seen:
+            continue
+        seen.add(t)
+        unique_track_lines.append(f"{len(seen)}. <code>{t}</code>")
+
+    text = (
+        "📤 Заявка на отправку груза\n\n"
+        f"🆔 Код клиента: <code>{code}</code>\n"
+        f"👤 Получатель: {fio}\n"
+        f"📞 Телефон: {phone}\n"
+        f"🏙️ Город доставки: {city}\n"
+        f"🚚 Способ доставки: {delivery_name}\n\n"
+        "📚 Зарегистрированные треки:\n" + ("\n".join(unique_track_lines) if unique_track_lines else "Нет зарегистрированных трек-кодов") + "\n\n"
+        "Подтвердить отправку?"
+    )
+    await CargoStates.confirming.set()
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=cargo_confirm_keyboard())
 @dp.message_handler(content_types=[ContentType.PHOTO], state="*")
 async def warehouse_photo_upload(message: types.Message, state: FSMContext):
 	# Обрабатываем фото только от аккаунта склада
