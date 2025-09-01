@@ -12,6 +12,7 @@ from aiogram.types import (
 	KeyboardButton,
 	CallbackQuery,
     WebAppInfo,
+    InputMediaPhoto,
 )
 from aiogram.utils import executor
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
@@ -33,6 +34,7 @@ from database import (
     set_recipient,
     get_next_cargo_num,
     create_shipment,
+    get_user_id_by_cargo_code,
 )
 
 
@@ -99,6 +101,15 @@ class CargoStates(StatesGroup):
 	waiting_for_recipient = State()
 	choosing_delivery = State()
 	confirming = State()
+
+
+class AdminShipmentStates(StatesGroup):
+	waiting_for_cargo_code = State()
+	waiting_for_media = State()
+
+
+# Буфер для медиа-альбомов администратора
+_admin_album_buffers: dict[str, list[dict]] = {}
 
 
 def get_main_menu_inline() -> InlineKeyboardMarkup:
@@ -228,6 +239,21 @@ def extract_track_from_text(text: Optional[str]) -> Optional[str]:
 	if match:
 		candidate = match.group(0)
 		return candidate if is_valid_track_number(candidate) else None
+	return None
+
+
+def extract_cargo_code(text: Optional[str]) -> Optional[str]:
+	if not text:
+		return None
+	raw = (text or "").strip().upper()
+	# Ожидаем формат EM03-00001
+	m = re.search(r"\bEM\d{2}-\d{5}\b", raw)
+	if m:
+		return m.group(0)
+	# Попытка нормализации EM03 00001 -> EM03-00001
+	m = re.search(r"\b(EM\d{2})\D*(\d{5})\b", raw)
+	if m:
+		return f"{m.group(1)}-{m.group(2)}"
 	return None
 
 
@@ -887,6 +913,77 @@ async def warehouse_photo_upload(message: types.Message, state: FSMContext):
 			"ℹ️ Фото сохранено. Клиенты по этому треку не найдены. Как только клиент зарегистрирует трек, он сможет увидеть фото."
 		)
 
+
+@dp.message_handler(commands=["shipped"], state="*")
+async def admin_shipped_start(message: types.Message, state: FSMContext):
+	# Только менеджер или склад
+	if message.from_user.id not in {MANAGER_ID, WAREHOUSE_ID}:
+		return
+	await state.finish()
+	args = (message.get_args() or "").strip()
+	cargo_code = extract_cargo_code(args)
+	if not cargo_code:
+		await message.answer("Укажите номер груза, например: /shipped EM03-00001")
+		return
+	user_id = get_user_id_by_cargo_code(cargo_code)
+	if not user_id:
+		await message.answer(f"Груз с номером <code>{cargo_code}</code> не найден.", parse_mode="HTML")
+		return
+	await state.update_data(cargo_code=cargo_code, target_user_id=user_id)
+	await AdminShipmentStates.waiting_for_media.set()
+	await message.answer(
+		"Отправьте одно или несколько фото груза/накладной одним или несколькими сообщениями. Когда закончите — отправьте текст 'готово' или команду /done. Для отмены — /cancel."
+	)
+
+
+@dp.message_handler(lambda m: m.text and m.text.lower() in {"готово", "done", "/done"}, state=AdminShipmentStates.waiting_for_media)
+async def admin_shipped_finish(message: types.Message, state: FSMContext):
+	data = await state.get_data()
+	user_id = data.get("target_user_id")
+	cargo_code = data.get("cargo_code")
+	if not user_id or not cargo_code:
+		await state.finish()
+		await message.answer("Сессия сброшена. Повторите /shipped.")
+		return
+	buffer_key = f"{message.from_user.id}:{cargo_code}"
+	media_items = _admin_album_buffers.get(buffer_key, [])
+	if not media_items:
+		await state.finish()
+		await message.answer("Нет прикрепленных фото. Отправьте хотя бы одно фото перед завершением.")
+		return
+
+	# Сформируем медиа группу (первые 10 по ограничению Telegram)
+	group: list[InputMediaPhoto] = []
+	for idx, item in enumerate(media_items[:10]):
+		caption = (f"📦 Отправка груза <b>{cargo_code}</b>" if idx == 0 else None)
+		group.append(InputMediaPhoto(media=item["file_id"], caption=caption, parse_mode="HTML"))
+
+	try:
+		if len(group) == 1:
+			await bot.send_photo(user_id, group[0].media, caption=group[0].caption, parse_mode="HTML")
+		else:
+			await bot.send_media_group(user_id, group)
+		await bot.send_message(user_id, f"✅ Ваш груз <b>{cargo_code}</b> отправлен. Фото во вложении.", parse_mode="HTML")
+		await message.answer("✅ Уведомление клиенту отправлено")
+	except Exception as e:
+		logger.exception("Failed to notify user about shipped cargo: %s", e)
+		await message.answer("❌ Ошибка отправки уведомления клиенту")
+
+	# Очистим буфер и состояние
+	_admin_album_buffers.pop(buffer_key, None)
+	await state.finish()
+
+
+@dp.message_handler(content_types=[ContentType.PHOTO], state=AdminShipmentStates.waiting_for_media)
+async def admin_shipped_collect_media(message: types.Message, state: FSMContext):
+	data = await state.get_data()
+	cargo_code = data.get("cargo_code")
+	if not cargo_code:
+		return
+	buffer_key = f"{message.from_user.id}:{cargo_code}"
+	items = _admin_album_buffers.setdefault(buffer_key, [])
+	items.append({"file_id": message.photo[-1].file_id})
+	await message.answer("Фото добавлено. Отправьте еще или напишите 'готово'.")
 
 @dp.message_handler(commands=["findtracks"], state="*")
 async def admin_findtracks(message: types.Message, state: FSMContext):
