@@ -27,6 +27,7 @@ from database import (
 	get_track_photos,
 	find_user_ids_by_track,
 	delete_all_user_tracks,
+    get_user_id_by_code,
 )
 
 
@@ -675,6 +676,36 @@ async def warehouse_photo_upload(message: types.Message, state: FSMContext):
 		await message.answer(
 			"ℹ️ Фото сохранено. Клиенты по этому треку не найдены. Как только клиент зарегистрирует трек, он сможет увидеть фото."
 		)
+
+
+@dp.message_handler(commands=["findtracks"], state="*")
+async def admin_findtracks(message: types.Message, state: FSMContext):
+	await state.finish()
+	# Only manager or warehouse can use
+	if message.from_user.id not in {MANAGER_ID, WAREHOUSE_ID}:
+		return
+	args = (message.get_args() or "").strip()
+	if not args:
+		await message.answer("Использование: /findtracks EM03-00001")
+		return
+	code = args.upper()
+	user_id = get_user_id_by_code(code)
+	if not user_id:
+		await message.answer(f"Пользователь с кодом <code>{code}</code> не найден.", parse_mode="HTML")
+		return
+	tracks = get_tracks(user_id)
+	if not tracks:
+		await message.answer(
+			f"У пользователя <code>{code}</code> нет зарегистрированных треков.",
+			parse_mode="HTML",
+		)
+		return
+	text = (
+		f"🧑‍💼 Запрос по клиенту <code>{code}</code> (user_id={user_id}):\n\n"
+		+ "📦 Треки:\n\n"
+		+ format_tracks(tracks)
+	)
+	await message.answer(text, parse_mode="HTML")
 
 
 @dp.message_handler()

@@ -97,6 +97,14 @@ if DEV_MODE:
         _tracks.extend(remaining)
         return deleted
 
+    def get_user_id_by_code(code: str) -> Optional[int]:
+        if not code:
+            return None
+        for uid, c in _users.items():
+            if c == code:
+                return uid
+        return None
+
 else:
     import psycopg2
     from psycopg2.pool import SimpleConnectionPool
@@ -287,3 +295,7 @@ else:
                     return cur.rowcount or 0
         finally:
             pool.putconn(conn)
+
+    def get_user_id_by_code(code: str) -> Optional[int]:
+        row = _fetchone("SELECT user_id FROM users WHERE code=%s", (code,))
+        return row[0] if row else None
