@@ -110,10 +110,6 @@ def get_main_menu_inline() -> InlineKeyboardMarkup:
 	kb.add(
 		InlineKeyboardButton("🧹 Очистить историю", callback_data="menu_clearhistory"),
 	)
-	if WEBAPP_URL:
-		kb.add(
-			InlineKeyboardButton("🧩 Открыть Mini App", web_app=types.WebAppInfo(url=WEBAPP_URL))
-		)
 	return kb
 
 
@@ -124,8 +120,6 @@ def get_main_menu_reply() -> ReplyKeyboardMarkup:
 	kb.row(KeyboardButton("🚚 Отправить трек"), KeyboardButton("📦 Мои треки"))
 	kb.row(KeyboardButton("📷 Фотоконтроль"))
 	kb.row(KeyboardButton("🧹 Очистить историю"))
-	if WEBAPP_URL:
-		kb.row(KeyboardButton("🧩 Открыть Mini App", web_app=types.WebAppInfo(url=WEBAPP_URL)))
 	return kb
 
 
