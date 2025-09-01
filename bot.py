@@ -108,14 +108,6 @@ def get_main_menu_inline() -> InlineKeyboardMarkup:
 	kb.add(
 		InlineKeyboardButton("📷 Фотоконтроль", callback_data="menu_photokontrol"),
 	)
-	# Админская кнопка сканера — видна всем, но проверка будет на входе страницы/эндпоинта
-	if WEBAPP_URL and WAREHOUSE_ID:
-		kb.add(
-			InlineKeyboardButton(
-				"🧪 Сканер (админ)",
-				web_app=WebAppInfo(url=f"{WEBAPP_URL}/scan"),
-			)
-		)
 	kb.add(
 		InlineKeyboardButton("🧹 Очистить историю", callback_data="menu_clearhistory"),
 	)
