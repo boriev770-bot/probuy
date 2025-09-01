@@ -3,13 +3,14 @@ import hmac
 import hashlib
 import json
 from urllib.parse import parse_qsl
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from fastapi import FastAPI, Depends, HTTPException, Header, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import httpx
 
 from database import (
     get_user_code,
@@ -30,6 +31,21 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 MANAGER_ID = int(os.getenv("MANAGER_ID", "0") or 0)
 WAREHOUSE_ID = int(os.getenv("WAREHOUSE_ID", "0") or 0)
 DEV_MODE = os.getenv("DEV_MODE", "").lower() in ("1", "true", "yes", "dev")
+
+# Текст адреса склада, как в боте
+CHINA_WAREHOUSE_ADDRESS = (
+    "\ud83c\udfed <b>\u0410\u0414\u0420\u0415\u0421 \u0421\u041a\u041b\u0410\u0414\u0410 \u0412 \u041a\u0418\u0422\u0410\u0415</b>\n\n"
+    "\u2b07\ufe0f \u0412\u0421\u0422\u0410\u0412\u042c\u0422\u0415 \u041d\u0418\u0416\u0415 \u0412\u0410\u0428 \u0420\u0415\u0410\u041b\u042c\u041d\u042b\u0419 \u0410\u0414\u0420\u0415\u0421 \u0421\u041a\u041b\u0410\u0414\u0410 (\u0437\u0430\u043c\u0435\u043d\u0438\u0442\u0435 \u044d\u0442\u043e\u0442 \u0442\u0435\u043a\u0441\u0442) \u2b07\ufe0f\n"
+    "<i>\u041f\u0440\u0438\u043c\u0435\u0440 \u0444\u043e\u0440\u043c\u0430\u0442\u0430: \u041a\u0438\u0442\u0430\u0439, \u043f\u0440\u043e\u0432\u0438\u043d\u0446\u0438\u044f ..., \u0433. ..., \u0440\u0430\u0439\u043e\u043d ..., \u0443\u043b. ..., \u0441\u043a\u043b\u0430\u0434 \u2116...</i>\n\n"
+    "\ud83d\udd11 <b>\u0412\u0410\u0428 \u041b\u0418\u0427\u041d\u042b\u0419 \u041a\u041e\u0414 \u041a\u041b\u0418\u0415\u041d\u0422\u0410:</b> <code>{client_code}</code>\n"
+)
+
+DELIVERY_TYPES: Dict[str, Dict[str, str]] = {
+    "fast_auto": {"name": "\ud83d\ude9b \u0411\u044b\u0441\u0442\u0440\u043e\u0435 \u0430\u0432\u0442\u043e"},
+    "slow_auto": {"name": "\ud83d\ude9a \u041c\u0435\u0434\u043b\u0435\u043d\u043d\u043e\u0435 \u0430\u0432\u0442\u043e"},
+    "rail": {"name": "\ud83d\ude82 \u0416\u0414"},
+    "air": {"name": "\u2708\ufe0f \u0410\u0432\u0438\u0430"},
+}
 
 def _compute_webapp_secret_key(bot_token: str) -> bytes:
     return hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()
@@ -86,6 +102,9 @@ class TrackRequest(BaseModel):
 class ManagerRequest(BaseModel):
     text: Optional[str] = None
 
+class BuyRequest(BaseModel):
+    text: str
+
 app = FastAPI(title="Probuy API", version="0.1.0")
 
 allowed_origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
@@ -112,13 +131,27 @@ async def me(user=Depends(tg_user_dep)):
         "tracks": [{"track": t, "delivery": d} for (t, d) in tracks],
     }
 
+@app.get("/api/address")
+async def get_address(user=Depends(tg_user_dep)):
+    user_id = int(user["id"])
+    code = get_user_code(user_id) or get_or_create_user_code(user_id)
+    return {"text": CHINA_WAREHOUSE_ADDRESS.format(client_code=code)}
+
+@app.get("/api/deliveries")
+async def get_deliveries() -> Dict[str, List[Dict[str, str]]]:
+    items = [{"key": k, "name": v.get("name", k)} for k, v in DELIVERY_TYPES.items()]
+    return {"items": items}
+
 @app.post("/api/track")
 async def add_track_ep(req: TrackRequest, user=Depends(tg_user_dep)):
     user_id = int(user["id"])
     track = (req.track or "").strip().upper()
     if len(track) < 8 or len(track) > 40 or not all(c.isalnum() and c.upper() == c for c in track):
         raise HTTPException(status_code=400, detail="Invalid track format")
-    add_track(user_id, track, (req.delivery or "").strip())
+    # Сохраняем человекочитаемое название доставки, если ключ известен
+    delivery_val = (req.delivery or "").strip()
+    delivery_name = DELIVERY_TYPES.get(delivery_val, {}).get("name") if delivery_val in DELIVERY_TYPES else delivery_val
+    add_track(user_id, track, delivery_name or "")
     tracks = get_tracks(user_id)
     return {"ok": True, "tracks": [{"track": t, "delivery": d} for (t, d) in tracks]}
 
@@ -157,6 +190,49 @@ async def notify_manager(req: ManagerRequest, user=Depends(tg_user_dep)):
         await bot.session.close()
     return {"ok": True, "sent": True}
 
+@app.post("/api/buy")
+async def buy_request(req: BuyRequest, user=Depends(tg_user_dep)):
+    if not MANAGER_ID:
+        return {"ok": True, "sent": False}
+    if not BOT_TOKEN or Bot is None:
+        raise HTTPException(status_code=500, detail="Bot not available for notifications")
+    user_id = int(user.get("id"))
+    code = get_user_code(user_id) or get_or_create_user_code(user_id)
+    bot = Bot(token=BOT_TOKEN)
+    try:
+        full_name = f"{user.get('first_name','')} {user.get('last_name','')}".strip()
+        username = f"@{user.get('username')}" if user.get('username') else "не указан"
+        text = (
+            "\ud83d\udecd\ufe0f <b>\u041d\u041e\u0412\u042b\u0419 \u0417\u0410\u041f\u0420\u041e\u0421 \u041d\u0410 \u041f\u041e\u041a\u0423\u041f\u041a\u0423 (Mini App)</b>\n\n"
+            f"\ud83c\udd94 \u041a\u043e\u0434 \u043a\u043b\u0438\u0435\u043d\u0442\u0430: <code>{code}</code>\n"
+            f"\ud83d\udc64 \u0418\u043c\u044f: {full_name}\n"
+            f"\ud83d\udcf1 Username: {username}\n"
+            f"\ud83c\udd94 Telegram ID: <code>{user_id}</code>\n\n"
+            f"\ud83d\udcdd \u0421\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435: {req.text}"
+        )
+        await bot.send_message(MANAGER_ID, text, parse_mode="HTML")
+    finally:
+        await bot.session.close()
+    return {"ok": True, "sent": True}
+
+@app.get("/api/tg_photo/{file_id}")
+async def proxy_tg_photo(file_id: str):
+    if not BOT_TOKEN:
+        raise HTTPException(status_code=500, detail="BOT_TOKEN is not set")
+    api_base = f"https://api.telegram.org/bot{BOT_TOKEN}"
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.get(f"{api_base}/getFile", params={"file_id": file_id})
+        data = r.json()
+        if not data.get("ok"):
+            raise HTTPException(status_code=404, detail="File not found")
+        file_path = data["result"].get("file_path")
+        if not file_path:
+            raise HTTPException(status_code=404, detail="No file_path")
+        file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+        stream = await client.stream("GET", file_url)
+        headers = {"Content-Type": stream.headers.get("Content-Type", "application/octet-stream")}
+        return StreamingResponse(stream.aiter_raw(), headers=headers)
+
 @app.on_event("startup")
 async def _startup():
     try:
@@ -164,6 +240,10 @@ async def _startup():
     except Exception:
         pass
 
-_dist_dir = os.path.join(os.path.dirname(__file__), "web", "dist")
+_base_dir = os.path.dirname(__file__)
+_dist_dir = os.path.join(_base_dir, "web", "dist")
+_web_dir = os.path.join(_base_dir, "web")
 if os.path.isdir(_dist_dir):
     app.mount("/", StaticFiles(directory=_dist_dir, html=True), name="static")
+elif os.path.isdir(_web_dir):
+    app.mount("/", StaticFiles(directory=_web_dir, html=True), name="static")
