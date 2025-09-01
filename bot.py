@@ -668,6 +668,10 @@ async def fallback(message: types.Message):
 async def on_startup(dp: Dispatcher):
 	init_db()
 	try:
+		await bot.delete_webhook(drop_pending_updates=True)
+	except Exception:
+		pass
+	try:
 		# Чистим системное меню команд
 		from aiogram.types import (
 			BotCommandScopeDefault,
@@ -708,4 +712,4 @@ async def on_shutdown(dp: Dispatcher):
 
 
 if __name__ == "__main__":
-	executor.start_polling(dp, skip_updates=True, on_startup=on_startup, on_shutdown=on_shutdown)
+	executor.start_polling(dp, skip_updates=False, on_startup=on_startup, on_shutdown=on_shutdown)
