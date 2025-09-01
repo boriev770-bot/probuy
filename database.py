@@ -9,6 +9,9 @@ if DEV_MODE:
     _tracks: list[dict] = []
     _track_photos: list[dict] = []
     _next_track_id: int = 1
+    _recipients: dict[int, dict] = {}
+    _shipments: list[dict] = []
+    _next_shipment_id: int = 1
 
     def init_db() -> None:
         # Миграция кодов в новый формат EM03-xxxxx
@@ -105,6 +108,43 @@ if DEV_MODE:
                 return uid
         return None
 
+    def get_recipient(user_id: int) -> Optional[dict]:
+        data = _recipients.get(user_id)
+        if not data:
+            return None
+        # return shallow copy to avoid accidental external mutation
+        return {"fio": data.get("fio", "").strip(), "phone": data.get("phone", "").strip(), "city": data.get("city", "").strip()}
+
+    def set_recipient(user_id: int, fio: str, phone: str, city: str) -> None:
+        _recipients[user_id] = {"fio": fio.strip(), "phone": phone.strip(), "city": city.strip()}
+
+    def get_next_cargo_num(user_id: int) -> int:
+        max_num = 0
+        for s in _shipments:
+            if s.get("user_id") == user_id:
+                try:
+                    n = int(s.get("cargo_num", 0))
+                    if n > max_num:
+                        max_num = n
+                except Exception:
+                    continue
+        return max_num + 1
+
+    def create_shipment(user_id: int, cargo_num: int, cargo_code: str, fio: str, phone: str, city: str) -> int:
+        global _next_shipment_id
+        shipment = {
+            "id": _next_shipment_id,
+            "user_id": user_id,
+            "cargo_num": int(cargo_num),
+            "cargo_code": cargo_code,
+            "fio": fio.strip(),
+            "phone": phone.strip(),
+            "city": city.strip(),
+        }
+        _shipments.append(shipment)
+        _next_shipment_id += 1
+        return shipment["id"]
+
 else:
     import psycopg2
     from psycopg2.pool import SimpleConnectionPool
@@ -192,6 +232,32 @@ else:
                 uploaded_by BIGINT,
                 caption TEXT,
                 created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """
+        )
+        _execute(
+            """
+            CREATE TABLE IF NOT EXISTS recipients (
+                user_id BIGINT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+                fio TEXT,
+                phone TEXT,
+                city TEXT,
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """
+        )
+        _execute(
+            """
+            CREATE TABLE IF NOT EXISTS shipments (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT REFERENCES users(user_id) ON DELETE CASCADE,
+                cargo_num INTEGER NOT NULL,
+                cargo_code TEXT NOT NULL,
+                fio TEXT,
+                phone TEXT,
+                city TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE (user_id, cargo_num)
             )
             """
         )
@@ -299,3 +365,47 @@ else:
     def get_user_id_by_code(code: str) -> Optional[int]:
         row = _fetchone("SELECT user_id FROM users WHERE code=%s", (code,))
         return row[0] if row else None
+
+    def get_recipient(user_id: int) -> Optional[dict]:
+        row = _fetchone("SELECT fio, phone, city FROM recipients WHERE user_id=%s", (user_id,))
+        if not row:
+            return None
+        fio, phone, city = row
+        return {"fio": (fio or "").strip(), "phone": (phone or "").strip(), "city": (city or "").strip()}
+
+    def set_recipient(user_id: int, fio: str, phone: str, city: str) -> None:
+        _execute(
+            """
+            INSERT INTO recipients (user_id, fio, phone, city, updated_at)
+            VALUES (%s, %s, %s, %s, NOW())
+            ON CONFLICT (user_id) DO UPDATE
+            SET fio = EXCLUDED.fio,
+                phone = EXCLUDED.phone,
+                city = EXCLUDED.city,
+                updated_at = NOW()
+            """,
+            (user_id, fio.strip(), phone.strip(), city.strip()),
+        )
+
+    def get_next_cargo_num(user_id: int) -> int:
+        row = _fetchone("SELECT COALESCE(MAX(cargo_num), 0) + 1 FROM shipments WHERE user_id=%s", (user_id,))
+        return int(row[0] if row and row[0] is not None else 1)
+
+    def create_shipment(user_id: int, cargo_num: int, cargo_code: str, fio: str, phone: str, city: str) -> int:
+        pool = _get_pool()
+        conn = pool.getconn()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO shipments (user_id, cargo_num, cargo_code, fio, phone, city)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                        """,
+                        (user_id, int(cargo_num), cargo_code, fio.strip(), phone.strip(), city.strip()),
+                    )
+                    row = cur.fetchone()
+                    return int(row[0])
+        finally:
+            pool.putconn(conn)
