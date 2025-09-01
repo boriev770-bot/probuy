@@ -868,16 +868,12 @@ async def choose_cargo_delivery(callback: CallbackQuery, state: FSMContext):
     )
     await CargoStates.confirming.set()
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=cargo_confirm_keyboard())
-@dp.message_handler(content_types=[ContentType.PHOTO], state="*")
+@dp.message_handler(lambda m: (getattr(m, "caption", "") or "").strip().lower().startswith("/shipped"), content_types=[ContentType.PHOTO], state="*")
 async def admin_shipped_with_photo(message: types.Message, state: FSMContext):
 	# Если администратор отправляет фото с подписью вида "/shipped EM.." в одном сообщении
-	caption_text = (message.caption or "").strip()
-	if not caption_text:
-		return
-	if not caption_text.lower().startswith("/shipped"):
-		return
 	if message.from_user.id not in {MANAGER_ID, WAREHOUSE_ID}:
 		return
+	caption_text = (message.caption or "").strip()
 
 	cargo_code = extract_cargo_code(caption_text)
 	if not cargo_code:
