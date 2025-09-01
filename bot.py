@@ -869,9 +869,43 @@ async def choose_cargo_delivery(callback: CallbackQuery, state: FSMContext):
     await CargoStates.confirming.set()
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=cargo_confirm_keyboard())
 @dp.message_handler(content_types=[ContentType.PHOTO], state="*")
+async def admin_shipped_with_photo(message: types.Message, state: FSMContext):
+	# Если администратор отправляет фото с подписью вида "/shipped EM.." в одном сообщении
+	caption_text = (message.caption or "").strip()
+	if not caption_text:
+		return
+	if not caption_text.lower().startswith("/shipped"):
+		return
+	if message.from_user.id not in {MANAGER_ID, WAREHOUSE_ID}:
+		return
+
+	cargo_code = extract_cargo_code(caption_text)
+	if not cargo_code:
+		await message.answer("Укажите номер груза в подписи, например: /shipped EM03-00001-1")
+		return
+	user_id = get_user_id_by_cargo_code(cargo_code)
+	if not user_id:
+		await message.answer(f"Груз с номером <code>{cargo_code}</code> не найден.", parse_mode="HTML")
+		return
+	try:
+		await bot.send_photo(
+			user_id,
+			message.photo[-1].file_id,
+			caption=f"📦 Ваш груз <b>{cargo_code}</b> упакован и отгружен в транспортную компанию.",
+			parse_mode="HTML",
+		)
+		await message.answer("✅ Уведомление клиенту отправлено")
+	except Exception as e:
+		logger.exception("Failed to notify user about shipped cargo (single message): %s", e)
+		await message.answer("❌ Ошибка отправки уведомления клиенту")
+@dp.message_handler(content_types=[ContentType.PHOTO], state="*")
 async def warehouse_photo_upload(message: types.Message, state: FSMContext):
-	# Обрабатываем фото только от аккаунта склада
-	if message.from_user.id != WAREHOUSE_ID:
+	# Обрабатываем фото только от администраторов (склад или менеджер)
+	if message.from_user.id not in {MANAGER_ID, WAREHOUSE_ID}:
+		return
+
+	# Если это фото с подписью вида "/shipped ...", отдаем обработку специализированному хендлеру
+	if (message.caption or "").strip().lower().startswith("/shipped"):
 		return
 
 	# Если сейчас идет сессия отправки груза (/shipped),
