@@ -29,6 +29,10 @@ from database import (
 	find_user_ids_by_track,
 	delete_all_user_tracks,
     get_user_id_by_code,
+    get_recipient,
+    set_recipient,
+    get_next_cargo_num,
+    create_shipment,
 )
 
 
@@ -91,6 +95,11 @@ class PhotoStates(StatesGroup):
 	waiting_for_track = State()
 
 
+class CargoStates(StatesGroup):
+	waiting_for_recipient = State()
+	confirming = State()
+
+
 def get_main_menu_inline() -> InlineKeyboardMarkup:
 	kb = InlineKeyboardMarkup(row_width=2)
 	kb.add(
@@ -107,6 +116,9 @@ def get_main_menu_inline() -> InlineKeyboardMarkup:
 	)
 	kb.add(
 		InlineKeyboardButton("📷 Фотоконтроль", callback_data="menu_photokontrol"),
+	)
+	kb.add(
+		InlineKeyboardButton("📤 Отправить груз", callback_data="menu_sendcargo"),
 	)
 	kb.add(
 		InlineKeyboardButton("🧹 Очистить историю", callback_data="menu_clearhistory"),
@@ -162,6 +174,31 @@ def clear_history_entry_keyboard() -> InlineKeyboardMarkup:
 	kb = InlineKeyboardMarkup(row_width=1)
 	kb.add(InlineKeyboardButton("🧹 Очистить историю", callback_data="menu_clearhistory"))
 	return kb
+
+
+def cargo_confirm_keyboard() -> InlineKeyboardMarkup:
+	kb = InlineKeyboardMarkup(row_width=2)
+	kb.add(
+		InlineKeyboardButton("✅ Подтвердить", callback_data="cargo_confirm"),
+		InlineKeyboardButton("✏️ Изменить", callback_data="cargo_edit"),
+	)
+	kb.add(InlineKeyboardButton("❌ Отменить", callback_data="cargo_cancel"))
+	return kb
+
+
+def parse_recipient_input(text: Optional[str]) -> Optional[Tuple[str, str, str]]:
+	if not text:
+		return None
+	raw = text.strip()
+	if not raw:
+		return None
+	# Разрешаем разделители: ; , или перенос строки
+	parts = re.split(r"[;\n,]+", raw)
+	parts = [p.strip() for p in parts if p.strip()]
+	if len(parts) < 3:
+		return None
+	fio, phone, city = parts[0], parts[1], parts[2]
+	return fio, phone, city
 
 
 def format_tracks(tracks: List[Tuple[str, Optional[str]]]) -> str:
@@ -397,11 +434,70 @@ async def menu_sendtrack(cb_or_msg, state: FSMContext):
 	await TrackStates.waiting_for_track.set()
 
 
+@dp.callback_query_handler(lambda c: c.data == "menu_sendcargo", state="*")
+async def menu_sendcargo(callback: CallbackQuery, state: FSMContext):
+	await bot.answer_callback_query(callback.id)
+	await state.finish()
+	user_id = callback.from_user.id
+	code = get_user_code(user_id)
+	if not code:
+		await callback.message.answer("Сначала получите личный код: нажмите «🔑 Получить код».", reply_markup=get_main_menu_inline())
+		return
+
+	# Проверим, есть ли сохраненные данные получателя
+	saved = get_recipient(user_id)
+	if saved and all(saved.get(k) for k in ("fio", "phone", "city")):
+		fio, phone, city = saved["fio"], saved["phone"], saved["city"]
+		tracks = get_tracks(user_id)
+		text = (
+			"📤 Заявка на отправку груза\n\n"
+			f"🆔 Код клиента: <code>{code}</code>\n"
+			f"👤 Получатель: {fio}\n"
+			f"📞 Телефон: {phone}\n"
+			f"🏙️ Город доставки: {city}\n\n"
+			"📚 Зарегистрированные треки:\n" + (format_tracks(tracks) if tracks else "Нет зарегистрированных трек-кодов")
+		)
+		await callback.message.answer(text, parse_mode="HTML", reply_markup=cargo_confirm_keyboard())
+		await CargoStates.confirming.set()
+		await state.update_data(fio=fio, phone=phone, city=city)
+		return
+
+	await callback.message.answer(
+		"✍️ Пришлите данные получателя одной строкой: ФИО; телефон; город доставки\nНапример: Иванов Иван; +7 999 000-00-00; Москва\nДля отмены — /cancel",
+	)
+	await CargoStates.waiting_for_recipient.set()
+
+
 @dp.message_handler(commands=["cancel"], state="*")
 async def cmd_cancel(message: types.Message, state: FSMContext):
 	await state.finish()
 	await message.answer("❌ Действие отменено.")
 	await message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+
+
+@dp.message_handler(state=CargoStates.waiting_for_recipient, content_types=[ContentType.TEXT])
+async def handle_recipient_input(message: types.Message, state: FSMContext):
+	code = await require_code_or_hint(message)
+	if not code:
+		await state.finish()
+		return
+	parsed = parse_recipient_input(message.text or "")
+	if not parsed:
+		await message.answer("⚠️ Формат не распознан. Пришлите: ФИО; телефон; город. Или /cancel")
+		return
+	fio, phone, city = parsed
+	await state.update_data(fio=fio, phone=phone, city=city)
+	tracks = get_tracks(message.from_user.id)
+	text = (
+		"📤 Заявка на отправку груза\n\n"
+		f"🆔 Код клиента: <code>{code}</code>\n"
+		f"👤 Получатель: {fio}\n"
+		f"📞 Телефон: {phone}\n"
+		f"🏙️ Город доставки: {city}\n\n"
+		"📚 Зарегистрированные треки:\n" + (format_tracks(tracks) if tracks else "Нет зарегистрированных трек-кодов")
+	)
+	await CargoStates.confirming.set()
+	await message.answer(text, parse_mode="HTML", reply_markup=cargo_confirm_keyboard())
 
 
 @dp.callback_query_handler(lambda c: c.data == "menu_clearhistory", state="*")
@@ -632,6 +728,73 @@ async def handle_photo_request(message: types.Message, state: FSMContext):
 			reply_markup=clear_history_entry_keyboard(),
 		)
 
+
+@dp.callback_query_handler(lambda c: c.data in ("cargo_confirm", "cargo_edit", "cargo_cancel"), state=CargoStates.confirming)
+async def confirm_cargo(callback: CallbackQuery, state: FSMContext):
+    await bot.answer_callback_query(callback.id)
+    if callback.data == "cargo_cancel":
+        await state.finish()
+        await callback.message.edit_text("❌ Отправка груза отменена")
+        await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+        return
+    if callback.data == "cargo_edit":
+        await CargoStates.waiting_for_recipient.set()
+        await callback.message.answer(
+            "✍️ Пришлите данные получателя одной строкой: ФИО; телефон; город доставки\nДля отмены — /cancel",
+        )
+        return
+
+    user_id = callback.from_user.id
+    code = get_user_code(user_id)
+    if not code:
+        await state.finish()
+        await callback.message.edit_text("Сначала получите личный код: нажмите «🔑 Получить код».")
+        await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+        return
+
+    data = await state.get_data()
+    fio, phone, city = data.get("fio", ""), data.get("phone", ""), data.get("city", "")
+    set_recipient(user_id, fio, phone, city)
+
+    tracks = get_tracks(user_id)
+    cargo_num = get_next_cargo_num(user_id)
+    cargo_code = f"{code}-{cargo_num}"
+    try:
+        create_shipment(user_id, cargo_num, cargo_code, fio, phone, city)
+    except Exception as e:
+        logger.exception("Failed to create shipment: %s", e)
+        await state.finish()
+        await callback.message.edit_text("❌ Ошибка создания отправки. Попробуйте позже.")
+        await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+        return
+
+    full_name = callback.from_user.full_name or ""
+    username = f"@{callback.from_user.username}" if callback.from_user.username else "не указан"
+    text = (
+        "📦 <b>ЗАЯВКА НА ОТПРАВКУ ГРУЗА</b>\n\n"
+        f"🆔 Код клиента: <code>{code}</code>\n"
+        f"📦 Номер груза: <b>{cargo_code}</b>\n\n"
+        f"👤 Клиент: {full_name}\n"
+        f"📱 Username: {username}\n"
+        f"🆔 Telegram ID: <code>{user_id}</code>\n\n"
+        f"👤 Получатель: {fio}\n"
+        f"📞 Телефон: {phone}\n"
+        f"🏙️ Город доставки: {city}\n\n"
+        "📚 Треки клиента:\n" + (format_tracks(tracks) if tracks else "Нет зарегистрированных трек-кодов")
+    )
+    if WAREHOUSE_ID:
+        try:
+            await bot.send_message(WAREHOUSE_ID, text, parse_mode="HTML")
+        except Exception as e:
+            logger.exception("Failed to notify warehouse about cargo: %s", e)
+
+    await state.finish()
+    await callback.message.edit_text(
+        "✅ Заявка отправлена сотруднику склада. Ожидайте подтверждения.\n"
+        f"Ваш номер груза: <b>{cargo_code}</b>",
+        parse_mode="HTML",
+    )
+    await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
 
 @dp.message_handler(content_types=[ContentType.PHOTO], state="*")
 async def warehouse_photo_upload(message: types.Message, state: FSMContext):
