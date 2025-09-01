@@ -145,6 +145,12 @@ if DEV_MODE:
         _next_shipment_id += 1
         return shipment["id"]
 
+    def get_user_id_by_cargo_code(cargo_code: str) -> Optional[int]:
+        for s in _shipments:
+            if s.get("cargo_code") == cargo_code:
+                return int(s.get("user_id"))
+        return None
+
 else:
     import psycopg2
     from psycopg2.pool import SimpleConnectionPool
@@ -409,3 +415,7 @@ else:
                     return int(row[0])
         finally:
             pool.putconn(conn)
+
+    def get_user_id_by_cargo_code(cargo_code: str) -> Optional[int]:
+        row = _fetchone("SELECT user_id FROM shipments WHERE cargo_code=%s", (cargo_code,))
+        return int(row[0]) if row and row[0] is not None else None
