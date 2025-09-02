@@ -37,6 +37,8 @@ from database import (
     get_user_id_by_cargo_code,
     update_shipment_status,
     list_user_shipments_by_status,
+    delete_all_user_shipments,
+    count_user_shipments,
 )
 
 
@@ -569,13 +571,14 @@ async def clear_history_entry(cb_or_msg, state: FSMContext):
 		return
 
 	tracks = get_tracks(user_id)
-	if not tracks:
+	shipments_total = count_user_shipments(user_id)
+	if not tracks and shipments_total == 0:
 		await tgt.answer("ℹ️ История пуста. Очищать нечего.")
 		await tgt.answer("Выберите действие:", reply_markup=get_main_menu_inline())
 		return
 
 	await tgt.answer(
-		"Вы уверены, что хотите удалить всю историю трек-кодов? Это действие нельзя отменить.",
+		"Вы уверены, что хотите удалить всю историю (треки и грузы)? Это действие нельзя отменить.",
 		reply_markup=clear_history_confirm_keyboard(),
 	)
 
@@ -597,9 +600,10 @@ async def clear_history_confirm(callback: CallbackQuery, state: FSMContext):
 		await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
 		return
 
-	deleted = delete_all_user_tracks(user_id)
+	deleted_tracks = delete_all_user_tracks(user_id)
+	deleted_shipments = delete_all_user_shipments(user_id)
 	await state.finish()
-	await callback.message.edit_text(f"✅ История очищена. Удалено записей: {deleted}.")
+	await callback.message.edit_text(f"✅ История очищена. Удалено треков: {deleted_tracks}, грузов: {deleted_shipments}.")
 	await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
 
 
