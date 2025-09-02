@@ -87,6 +87,29 @@ storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
 
+# Держим одно «экранное» сообщение меню на чат и редактируем его вместо спама новыми сообщениями
+_menu_message_by_chat: dict[int, int] = {}
+
+
+async def show_menu_screen(chat_id: int, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None, parse_mode: Optional[str] = "HTML") -> None:
+	message_id = _menu_message_by_chat.get(chat_id)
+	if message_id:
+		try:
+			await bot.edit_message_text(
+				chat_id=chat_id,
+				message_id=message_id,
+				text=text,
+				parse_mode=parse_mode,
+				reply_markup=reply_markup,
+			)
+			return
+		except Exception:
+			# Если не удалось отредактировать (удалено/устарело) — пришлём новое и запомним id
+			pass
+	sent = await bot.send_message(chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup)
+	_menu_message_by_chat[chat_id] = sent.message_id
+
+
 class TrackStates(StatesGroup):
 	waiting_for_track = State()
 	choosing_delivery = State()
@@ -298,8 +321,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
 		"Затем используйте остальные функции в меню.\n\n"
 		"🧹 Теперь вы можете очистить историю ваших трек-кодов в любой момент."
 	)
-	await message.answer(welcome, parse_mode="HTML", reply_markup=get_main_menu_inline())
-	await message.answer("✅ Команда выполнена.")
+	await show_menu_screen(message.chat.id, welcome, reply_markup=get_main_menu_inline(), parse_mode="HTML")
 
 
 @dp.callback_query_handler(lambda c: c.data == "menu_getcod", state="*")
@@ -319,7 +341,7 @@ async def menu_getcod(cb_or_msg, state: FSMContext):
 		code = get_or_create_user_code(user_id)
 
 	await tgt.answer(f"🔑 Ваш личный код клиента: <code>{code}</code>", parse_mode="HTML")
-	await tgt.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+	await show_menu_screen(tgt.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 
 
 @dp.callback_query_handler(lambda c: c.data == "menu_address", state="*")
@@ -340,7 +362,7 @@ async def menu_address(cb_or_msg, state: FSMContext):
 		return
 
 	await tgt.answer(CHINA_WAREHOUSE_ADDRESS.format(client_code=code), parse_mode="HTML")
-	await tgt.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+	await show_menu_screen(tgt.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 
 
 @dp.callback_query_handler(lambda c: c.data == "menu_mytracks", state="*")
@@ -363,7 +385,7 @@ async def menu_mytracks(cb_or_msg, state: FSMContext):
 	tracks = get_tracks(user_id)
 	text = f"🔑 Ваш код клиента: <code>{code}</code>\n\n" + ("📦 Ваши трек-коды:\n\n" + format_tracks(tracks) if tracks else "Пока нет зарегистрированных трек-кодов")
 	await tgt.answer(text, parse_mode="HTML", reply_markup=clear_history_entry_keyboard())
-	await tgt.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+	await show_menu_screen(tgt.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 
 
 @dp.callback_query_handler(lambda c: c.data == "menu_manager", state="*")
@@ -454,7 +476,7 @@ async def handle_buy_details(message: types.Message, state: FSMContext):
 
 	await state.finish()
 	await message.answer("✅ Ваш запрос отправлен менеджеру. Он свяжется с вами.")
-	await message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+	await show_menu_screen(message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 
 
 @dp.callback_query_handler(lambda c: c.data == "menu_sendtrack", state="*")
@@ -524,7 +546,7 @@ async def menu_sendcargo(callback: CallbackQuery, state: FSMContext):
 async def cmd_cancel(message: types.Message, state: FSMContext):
 	await state.finish()
 	await message.answer("❌ Действие отменено.")
-	await message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+	await show_menu_screen(message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 
 
 @dp.message_handler(state=CargoStates.waiting_for_recipient, content_types=[ContentType.TEXT])
@@ -574,7 +596,7 @@ async def clear_history_entry(cb_or_msg, state: FSMContext):
 	shipments_total = count_user_shipments(user_id)
 	if not tracks and shipments_total == 0:
 		await tgt.answer("ℹ️ История пуста. Очищать нечего.")
-		await tgt.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+		await show_menu_screen(tgt.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 		return
 
 	await tgt.answer(
@@ -589,7 +611,7 @@ async def clear_history_confirm(callback: CallbackQuery, state: FSMContext):
 	if callback.data == "clear_cancel":
 		await state.finish()
 		await callback.message.edit_text("❌ Очистка отменена")
-		await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+		await show_menu_screen(callback.message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 		return
 
 	user_id = callback.from_user.id
@@ -597,14 +619,14 @@ async def clear_history_confirm(callback: CallbackQuery, state: FSMContext):
 	if not code:
 		await state.finish()
 		await callback.message.edit_text("Сначала получите личный код: нажмите «🔑 Получить код».")
-		await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+		await show_menu_screen(callback.message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 		return
 
 	deleted_tracks = delete_all_user_tracks(user_id)
 	deleted_shipments = delete_all_user_shipments(user_id)
 	await state.finish()
 	await callback.message.edit_text(f"✅ История очищена. Удалено треков: {deleted_tracks}, грузов: {deleted_shipments}.")
-	await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+	await show_menu_screen(callback.message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 
 
 @dp.message_handler(state=TrackStates.waiting_for_track, content_types=[ContentType.TEXT])
@@ -632,7 +654,7 @@ async def handle_track_input(message: types.Message, state: FSMContext):
 		"Когда будете готовы отправить груз, нажмите «📤 Отправить груз». Все ваши треки будут переданы складу одним сообщением.",
 		parse_mode="HTML",
 	)
-	await message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+	await show_menu_screen(message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 
 
 @dp.callback_query_handler(lambda c: c.data.startswith("delivery_"), state=TrackStates.choosing_delivery)
@@ -641,7 +663,7 @@ async def choose_delivery(callback: CallbackQuery, state: FSMContext):
 	if callback.data == "delivery_cancel":
 		await state.finish()
 		await callback.message.edit_text("❌ Добавление трека отменено")
-		await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+		await show_menu_screen(callback.message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 		return
 
 	delivery_key = callback.data.replace("delivery_", "")
@@ -667,7 +689,7 @@ async def confirm_track(callback: CallbackQuery, state: FSMContext):
 	if callback.data == "confirm_cancel":
 		await state.finish()
 		await callback.message.edit_text("❌ Добавление трека отменено")
-		await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+		await show_menu_screen(callback.message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 		return
 
 	user_id = callback.from_user.id
@@ -675,7 +697,7 @@ async def confirm_track(callback: CallbackQuery, state: FSMContext):
 	if not code:
 		await state.finish()
 		await callback.message.edit_text("Сначала получите личный код: нажмите «🔑 Получить код».")
-		await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+		await show_menu_screen(callback.message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 		return
 
 	data = await state.get_data()
@@ -687,7 +709,7 @@ async def confirm_track(callback: CallbackQuery, state: FSMContext):
 		logger.exception("Failed to save track: %s", e)
 		await state.finish()
 		await callback.message.edit_text("❌ Ошибка сохранения трека. Попробуйте позже.")
-		await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+		await show_menu_screen(callback.message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 		return
 
 	await state.finish()
@@ -695,7 +717,7 @@ async def confirm_track(callback: CallbackQuery, state: FSMContext):
 		"✅ Трек-код зарегистрирован. Он будет передан сотруднику склада в составе вашей заявки на отправку груза.",
 		parse_mode="HTML",
 	)
-	await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+	await show_menu_screen(callback.message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 
 
 @dp.callback_query_handler(lambda c: c.data == "menu_photokontrol", state="*")
@@ -750,7 +772,7 @@ async def handle_photo_request(message: types.Message, state: FSMContext):
 			f"📭 Фото по треку <code>{track}</code> пока не загружены.",
 			parse_mode="HTML",
 		)
-		await message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+		await show_menu_screen(message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 		return
 
 	# Отправляем все фото пользователю
@@ -765,7 +787,7 @@ async def handle_photo_request(message: types.Message, state: FSMContext):
 
 	await state.finish()
 	await message.answer("✅ Все доступные фото отправлены.")
-	await message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+	await show_menu_screen(message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 	# Предложим возможность очистить историю
 	user_tracks = get_tracks(message.from_user.id)
 	if user_tracks:
@@ -781,7 +803,7 @@ async def confirm_cargo(callback: CallbackQuery, state: FSMContext):
     if callback.data == "cargo_cancel":
         await state.finish()
         await callback.message.edit_text("❌ Отправка груза отменена")
-        await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+        await show_menu_screen(callback.message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
         return
     if callback.data == "cargo_edit":
         await CargoStates.waiting_for_recipient.set()
@@ -795,7 +817,7 @@ async def confirm_cargo(callback: CallbackQuery, state: FSMContext):
     if not code:
         await state.finish()
         await callback.message.edit_text("Сначала получите личный код: нажмите «🔑 Получить код».")
-        await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+        await show_menu_screen(callback.message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
         return
 
     data = await state.get_data()
@@ -814,7 +836,7 @@ async def confirm_cargo(callback: CallbackQuery, state: FSMContext):
         logger.exception("Failed to create shipment: %s", e)
         await state.finish()
         await callback.message.edit_text("❌ Ошибка создания отправки. Попробуйте позже.")
-        await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+        await show_menu_screen(callback.message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
         return
 
     full_name = callback.from_user.full_name or ""
@@ -853,7 +875,7 @@ async def confirm_cargo(callback: CallbackQuery, state: FSMContext):
         f"Ваш номер груза: <b>{cargo_code}</b>",
         parse_mode="HTML",
     )
-    await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+    await show_menu_screen(callback.message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 
 @dp.callback_query_handler(lambda c: c.data.startswith("delivery_"), state=CargoStates.choosing_delivery)
 async def choose_cargo_delivery(callback: CallbackQuery, state: FSMContext):
@@ -861,7 +883,7 @@ async def choose_cargo_delivery(callback: CallbackQuery, state: FSMContext):
     if callback.data == "delivery_cancel":
         await state.finish()
         await callback.message.edit_text("❌ Оформление отправки отменено")
-        await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+        await show_menu_screen(callback.message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
         return
 
     delivery_key = callback.data.replace("delivery_", "")
@@ -908,7 +930,7 @@ async def menu_warehouse(callback: CallbackQuery, state: FSMContext):
 async def back_to_main(callback: CallbackQuery, state: FSMContext):
     await bot.answer_callback_query(callback.id)
     await state.finish()
-    await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+    await show_menu_screen(callback.message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 
 
 @dp.callback_query_handler(lambda c: c.data == "menu_status", state="*")
@@ -943,7 +965,7 @@ async def menu_status_list(callback: CallbackQuery, state: FSMContext):
     text = _format_cargo_list(title, cargo_codes)
     await callback.message.answer(text, parse_mode="HTML", reply_markup=cargo_status_menu_keyboard())
     # Также предложим вернуться в главное меню
-    await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+    await show_menu_screen(callback.message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 @dp.message_handler(lambda m: (getattr(m, "caption", "") or "").strip().lower().startswith("/shipped"), content_types=[ContentType.PHOTO], state="*")
 async def admin_shipped_with_photo(message: types.Message, state: FSMContext):
 	# Если администратор отправляет фото с подписью вида "/shipped EM.." в одном сообщении
@@ -1164,7 +1186,7 @@ async def admin_findtracks(message: types.Message, state: FSMContext):
 
 @dp.message_handler()
 async def fallback(message: types.Message):
-	await message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+	await show_menu_screen(message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 
 
 async def on_startup(dp: Dispatcher):
