@@ -1,5 +1,6 @@
 import os
 from typing import List, Optional, Tuple
+from datetime import datetime, timezone
 
 DEV_MODE = os.getenv("DEV_MODE", "").lower() in ("1", "true", "yes", "dev")
 
@@ -130,7 +131,7 @@ if DEV_MODE:
                     continue
         return max_num + 1
 
-    def create_shipment(user_id: int, cargo_num: int, cargo_code: str, fio: str, phone: str, city: str) -> int:
+    def create_shipment(user_id: int, cargo_num: int, cargo_code: str, fio: str, phone: str, city: str, status: Optional[str] = None) -> int:
         global _next_shipment_id
         shipment = {
             "id": _next_shipment_id,
@@ -140,6 +141,8 @@ if DEV_MODE:
             "fio": fio.strip(),
             "phone": phone.strip(),
             "city": city.strip(),
+            "status": (status or None),
+            "status_updated_at": (datetime.now(timezone.utc).isoformat() if status else None),
         }
         _shipments.append(shipment)
         _next_shipment_id += 1
@@ -150,6 +153,20 @@ if DEV_MODE:
             if s.get("cargo_code") == cargo_code:
                 return int(s.get("user_id"))
         return None
+
+    def update_shipment_status(cargo_code: str, status: str) -> None:
+        for s in _shipments:
+            if s.get("cargo_code") == cargo_code:
+                s["status"] = status
+                s["status_updated_at"] = datetime.now(timezone.utc).isoformat()
+                return
+
+    def list_user_shipments_by_status(user_id: int, status: str) -> List[str]:
+        result: List[str] = []
+        for s in _shipments:
+            if int(s.get("user_id", 0)) == int(user_id) and (s.get("status") or "") == status:
+                result.append(str(s.get("cargo_code")))
+        return result
 
 else:
     import psycopg2
@@ -267,6 +284,9 @@ else:
             )
             """
         )
+        # Расширение схемы: добавляем статус отправки и дату обновления статуса
+        _execute("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS status TEXT")
+        _execute("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS status_updated_at TIMESTAMPTZ")
         # Миграция: PBxxxxx -> EM03-xxxxx
         _execute(
             """
@@ -397,7 +417,7 @@ else:
         row = _fetchone("SELECT COALESCE(MAX(cargo_num), 0) + 1 FROM shipments WHERE user_id=%s", (user_id,))
         return int(row[0] if row and row[0] is not None else 1)
 
-    def create_shipment(user_id: int, cargo_num: int, cargo_code: str, fio: str, phone: str, city: str) -> int:
+    def create_shipment(user_id: int, cargo_num: int, cargo_code: str, fio: str, phone: str, city: str, status: Optional[str] = None) -> int:
         pool = _get_pool()
         conn = pool.getconn()
         try:
@@ -405,11 +425,11 @@ else:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        INSERT INTO shipments (user_id, cargo_num, cargo_code, fio, phone, city)
-                        VALUES (%s, %s, %s, %s, %s, %s)
+                        INSERT INTO shipments (user_id, cargo_num, cargo_code, fio, phone, city, status, status_updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, CASE WHEN %s IS NULL THEN NULL ELSE NOW() END)
                         RETURNING id
                         """,
-                        (user_id, int(cargo_num), cargo_code, fio.strip(), phone.strip(), city.strip()),
+                        (user_id, int(cargo_num), cargo_code, fio.strip(), phone.strip(), city.strip(), status, status),
                     )
                     row = cur.fetchone()
                     return int(row[0])
@@ -419,3 +439,16 @@ else:
     def get_user_id_by_cargo_code(cargo_code: str) -> Optional[int]:
         row = _fetchone("SELECT user_id FROM shipments WHERE cargo_code=%s", (cargo_code,))
         return int(row[0]) if row and row[0] is not None else None
+
+    def update_shipment_status(cargo_code: str, status: str) -> None:
+        _execute(
+            "UPDATE shipments SET status=%s, status_updated_at=NOW() WHERE cargo_code=%s",
+            (status, cargo_code),
+        )
+
+    def list_user_shipments_by_status(user_id: int, status: str) -> List[str]:
+        rows = _fetchall(
+            "SELECT cargo_code FROM shipments WHERE user_id=%s AND status=%s ORDER BY id ASC",
+            (user_id, status),
+        )
+        return [r[0] for r in rows]

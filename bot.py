@@ -35,6 +35,8 @@ from database import (
     get_next_cargo_num,
     create_shipment,
     get_user_id_by_cargo_code,
+    update_shipment_status,
+    list_user_shipments_by_status,
 )
 
 
@@ -123,14 +125,11 @@ def get_main_menu_inline() -> InlineKeyboardMarkup:
 		InlineKeyboardButton("📍 Получить адрес", callback_data="menu_address"),
 	)
 	kb.add(
-		InlineKeyboardButton("🚚 Отправить трек", callback_data="menu_sendtrack"),
-		InlineKeyboardButton("📦 Мои треки", callback_data="menu_mytracks"),
+		InlineKeyboardButton("🏭 Склад", callback_data="menu_warehouse"),
+		InlineKeyboardButton("📦 Статус груза", callback_data="menu_status"),
 	)
 	kb.add(
 		InlineKeyboardButton("📷 Фотоконтроль", callback_data="menu_photokontrol"),
-	)
-	kb.add(
-		InlineKeyboardButton("📤 Отправить груз", callback_data="menu_sendcargo"),
 	)
 	kb.add(
 		InlineKeyboardButton("🧹 Очистить историю", callback_data="menu_clearhistory"),
@@ -142,7 +141,7 @@ def get_main_menu_reply() -> ReplyKeyboardMarkup:
 	kb = ReplyKeyboardMarkup(resize_keyboard=True)
 	kb.row(KeyboardButton("🛒 Заказать"), KeyboardButton("👨‍💼 Менеджер"))
 	kb.row(KeyboardButton("🔑 Получить код"), KeyboardButton("📍 Получить адрес"))
-	kb.row(KeyboardButton("🚚 Отправить трек"), KeyboardButton("📦 Мои треки"))
+	kb.row(KeyboardButton("🏭 Склад"), KeyboardButton("📦 Статус груза"))
 	kb.row(KeyboardButton("📷 Фотоконтроль"))
 	kb.row(KeyboardButton("🧹 Очистить историю"))
 	return kb
@@ -195,6 +194,29 @@ def cargo_confirm_keyboard() -> InlineKeyboardMarkup:
 		InlineKeyboardButton("✏️ Изменить", callback_data="cargo_edit"),
 	)
 	kb.add(InlineKeyboardButton("❌ Отменить", callback_data="cargo_cancel"))
+	return kb
+
+
+def warehouse_menu_keyboard() -> InlineKeyboardMarkup:
+	kb = InlineKeyboardMarkup(row_width=2)
+	kb.add(
+		InlineKeyboardButton("🚚 Отправить трек", callback_data="menu_sendtrack"),
+		InlineKeyboardButton("📦 Мои треки", callback_data="menu_mytracks"),
+	)
+	kb.add(
+		InlineKeyboardButton("📤 Отправить груз", callback_data="menu_sendcargo"),
+	)
+	kb.add(InlineKeyboardButton("⬅️ Назад", callback_data="back_main"))
+	return kb
+
+
+def cargo_status_menu_keyboard() -> InlineKeyboardMarkup:
+	kb = InlineKeyboardMarkup(row_width=2)
+	kb.add(
+		InlineKeyboardButton("🧰 На сборке", callback_data="status_building"),
+		InlineKeyboardButton("✅ Отгруженные", callback_data="status_shipped"),
+	)
+	kb.add(InlineKeyboardButton("⬅️ Назад", callback_data="back_main"))
 	return kb
 
 
@@ -782,7 +804,8 @@ async def confirm_cargo(callback: CallbackQuery, state: FSMContext):
     cargo_num = get_next_cargo_num(user_id)
     cargo_code = f"{code}-{cargo_num}"
     try:
-        create_shipment(user_id, cargo_num, cargo_code, fio, phone, city)
+        # Статус по умолчанию: на сборке
+        create_shipment(user_id, cargo_num, cargo_code, fio, phone, city, status="на сборке")
     except Exception as e:
         logger.exception("Failed to create shipment: %s", e)
         await state.finish()
@@ -868,6 +891,55 @@ async def choose_cargo_delivery(callback: CallbackQuery, state: FSMContext):
     )
     await CargoStates.confirming.set()
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=cargo_confirm_keyboard())
+
+
+@dp.callback_query_handler(lambda c: c.data == "menu_warehouse", state="*")
+async def menu_warehouse(callback: CallbackQuery, state: FSMContext):
+    await bot.answer_callback_query(callback.id)
+    await state.finish()
+    await callback.message.answer("🏭 Раздел склада:", reply_markup=warehouse_menu_keyboard())
+
+
+@dp.callback_query_handler(lambda c: c.data == "back_main", state="*")
+async def back_to_main(callback: CallbackQuery, state: FSMContext):
+    await bot.answer_callback_query(callback.id)
+    await state.finish()
+    await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
+
+
+@dp.callback_query_handler(lambda c: c.data == "menu_status", state="*")
+async def menu_status(callback: CallbackQuery, state: FSMContext):
+    await bot.answer_callback_query(callback.id)
+    await state.finish()
+    await callback.message.answer("📦 Статус груза:", reply_markup=cargo_status_menu_keyboard())
+
+
+def _format_cargo_list(title: str, items: list[str]) -> str:
+    if not items:
+        return f"{title}: пусто"
+    lines = [f"{idx}. <code>{code}</code>" for idx, code in enumerate(items, start=1)]
+    return f"{title} (всего: {len(items)}):\n" + "\n".join(lines)
+
+
+@dp.callback_query_handler(lambda c: c.data in ("status_building", "status_shipped"), state="*")
+async def menu_status_list(callback: CallbackQuery, state: FSMContext):
+    await bot.answer_callback_query(callback.id)
+    await state.finish()
+    user_id = callback.from_user.id
+    code = get_user_code(user_id)
+    if not code:
+        await callback.message.answer("Сначала получите личный код: нажмите «🔑 Получить код».", reply_markup=get_main_menu_inline())
+        return
+    status_value = "на сборке" if callback.data == "status_building" else "отгружен"
+    try:
+        cargo_codes = list_user_shipments_by_status(user_id, status_value)
+    except Exception:
+        cargo_codes = []
+    title = "🧰 На сборке" if callback.data == "status_building" else "✅ Отгруженные"
+    text = _format_cargo_list(title, cargo_codes)
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=cargo_status_menu_keyboard())
+    # Также предложим вернуться в главное меню
+    await callback.message.answer("Выберите действие:", reply_markup=get_main_menu_inline())
 @dp.message_handler(lambda m: (getattr(m, "caption", "") or "").strip().lower().startswith("/shipped"), content_types=[ContentType.PHOTO], state="*")
 async def admin_shipped_with_photo(message: types.Message, state: FSMContext):
 	# Если администратор отправляет фото с подписью вида "/shipped EM.." в одном сообщении
@@ -883,6 +955,11 @@ async def admin_shipped_with_photo(message: types.Message, state: FSMContext):
 	if not user_id:
 		await message.answer(f"Груз с номером <code>{cargo_code}</code> не найден.", parse_mode="HTML")
 		return
+	# Обновляем статус: отгружен
+	try:
+		update_shipment_status(cargo_code, "отгружен")
+	except Exception:
+		pass
 	try:
 		await bot.send_photo(
 			user_id,
@@ -1008,6 +1085,12 @@ async def admin_shipped_finish(message: types.Message, state: FSMContext):
 	except Exception as e:
 		logger.exception("Failed to notify user about shipped cargo: %s", e)
 		await message.answer("❌ Ошибка отправки уведомления клиенту")
+
+	# Обновляем статус отправки: отгружен
+	try:
+		update_shipment_status(cargo_code, "отгружен")
+	except Exception:
+		pass
 
 	# Очистим буфер и состояние
 	_admin_album_buffers.pop(buffer_key, None)
