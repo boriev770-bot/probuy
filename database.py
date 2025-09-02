@@ -168,6 +168,17 @@ if DEV_MODE:
                 result.append(str(s.get("cargo_code")))
         return result
 
+    def delete_all_user_shipments(user_id: int) -> int:
+        before = len(_shipments)
+        remaining = [s for s in _shipments if int(s.get("user_id", 0)) != int(user_id)]
+        deleted = before - len(remaining)
+        _shipments.clear()
+        _shipments.extend(remaining)
+        return deleted
+
+    def count_user_shipments(user_id: int) -> int:
+        return sum(1 for s in _shipments if int(s.get("user_id", 0)) == int(user_id))
+
 else:
     import psycopg2
     from psycopg2.pool import SimpleConnectionPool
@@ -452,3 +463,18 @@ else:
             (user_id, status),
         )
         return [r[0] for r in rows]
+
+    def delete_all_user_shipments(user_id: int) -> int:
+        pool = _get_pool()
+        conn = pool.getconn()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM shipments WHERE user_id=%s", (user_id,))
+                    return cur.rowcount or 0
+        finally:
+            pool.putconn(conn)
+
+    def count_user_shipments(user_id: int) -> int:
+        row = _fetchone("SELECT COUNT(*) FROM shipments WHERE user_id=%s", (user_id,))
+        return int(row[0]) if row and row[0] is not None else 0
