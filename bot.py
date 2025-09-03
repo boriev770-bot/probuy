@@ -978,8 +978,6 @@ async def menu_status_list(callback: CallbackQuery, state: FSMContext):
     title = "🧰 На сборке" if callback.data == "status_building" else "✅ Отгруженные"
     text = _format_cargo_list(title, cargo_codes)
     await show_menu_screen(callback.message.chat.id, text, reply_markup=cargo_status_menu_keyboard(), parse_mode="HTML")
-    # Также предложим вернуться в главное меню
-    await show_menu_screen(callback.message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 @dp.message_handler(lambda m: (getattr(m, "caption", "") or "").strip().lower().startswith("/shipped"), content_types=[ContentType.PHOTO], state="*")
 async def admin_shipped_with_photo(message: types.Message, state: FSMContext):
 	# Если администратор отправляет фото с подписью вида "/shipped EM.." в одном сообщении
