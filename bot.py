@@ -1262,7 +1262,7 @@ async def on_startup(dp: Dispatcher):
 				pass
 			await asyncio.sleep(3600)
 
-	dp.loop.create_task(reminder_loop())
+	asyncio.get_running_loop().create_task(reminder_loop())
 	try:
 		await bot.delete_webhook(drop_pending_updates=True)
 	except Exception:
