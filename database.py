@@ -7,6 +7,9 @@ DEV_MODE = os.getenv("DEV_MODE", "").lower() in ("1", "true", "yes", "dev")
 if DEV_MODE:
     # Простой режим для разработки: все данные в памяти (исчезают при перезапуске)
     _users: dict[int, str] = {}
+    # Дополнительные метаданные пользователей для DEV режима
+    _user_meta: dict[int, dict] = {}
+    _all_user_ids: set[int] = set()
     _tracks: list[dict] = []
     _track_photos: list[dict] = []
     _next_track_id: int = 1
@@ -40,6 +43,29 @@ if DEV_MODE:
             _users.clear()
             _users.update(migrated)
 
+    def _ensure_user_row(user_id: int) -> None:
+        # В DEV режиме просто регистрируем пользователя в наборе
+        _all_user_ids.add(int(user_id))
+
+    def _ensure_meta(user_id: int) -> dict:
+        _ensure_user_row(user_id)
+        meta = _user_meta.get(int(user_id))
+        if not meta:
+            meta = {
+                "first_seen_at": None,
+                "last_activity_at": None,
+                "last_address_pressed_at": None,
+                "last_sendcargo_pressed_at": None,
+                "last_address_reminder_at": None,
+                "last_sendcargo_reminder_at": None,
+                "last_inactive_reminder_at": None,
+            }
+            _user_meta[int(user_id)] = meta
+        return meta
+
+    def _now_iso() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
     def _generate_next_code() -> str:
         max_num = 0
         for code in _users.values():
@@ -61,6 +87,7 @@ if DEV_MODE:
             return code
         code = _generate_next_code()
         _users[user_id] = code
+        _ensure_user_row(user_id)
         return code
 
     def add_track(user_id: int, track: str, delivery: str = "") -> None:
@@ -179,6 +206,85 @@ if DEV_MODE:
     def count_user_shipments(user_id: int) -> int:
         return sum(1 for s in _shipments if int(s.get("user_id", 0)) == int(user_id))
 
+    # --- Reminders & activity (DEV mode) ---
+    def record_user_activity(user_id: int) -> None:
+        meta = _ensure_meta(user_id)
+        now = _now_iso()
+        if not meta.get("first_seen_at"):
+            meta["first_seen_at"] = now
+        meta["last_activity_at"] = now
+
+    def mark_pressed_address(user_id: int) -> None:
+        meta = _ensure_meta(user_id)
+        now = _now_iso()
+        meta["last_address_pressed_at"] = now
+
+    def mark_pressed_sendcargo(user_id: int) -> None:
+        meta = _ensure_meta(user_id)
+        now = _now_iso()
+        meta["last_sendcargo_pressed_at"] = now
+
+    def _older_than(ts_iso: Optional[str], days: int) -> bool:
+        if not ts_iso:
+            return False
+        try:
+            ts = datetime.fromisoformat(ts_iso.replace("Z", "+00:00"))
+        except Exception:
+            return False
+        delta = datetime.now(timezone.utc) - ts
+        return delta.total_seconds() >= days * 86400
+
+    def get_users_for_address_reminder(days: int = 5) -> List[int]:
+        result: List[int] = []
+        for uid, meta in _user_meta.items():
+            if meta.get("last_address_reminder_at"):
+                continue
+            if meta.get("last_address_pressed_at"):
+                continue
+            first_seen = meta.get("first_seen_at")
+            if first_seen and _older_than(first_seen, days):
+                result.append(int(uid))
+        return result
+
+    def get_users_for_sendcargo_reminder(days: int = 15) -> List[int]:
+        result: List[int] = []
+        for uid, meta in _user_meta.items():
+            if meta.get("last_sendcargo_reminder_at"):
+                continue
+            if meta.get("last_sendcargo_pressed_at"):
+                continue
+            first_seen = meta.get("first_seen_at")
+            if first_seen and _older_than(first_seen, days):
+                result.append(int(uid))
+        return result
+
+    def get_users_for_inactive_reminder(days: int = 30) -> List[int]:
+        result: List[int] = []
+        for uid, meta in _user_meta.items():
+            last_act = meta.get("last_activity_at")
+            if not last_act:
+                continue
+            if not _older_than(last_act, days):
+                continue
+            last_sent = meta.get("last_inactive_reminder_at")
+            # Отправляем один раз за период неактивности
+            if last_sent and last_sent >= last_act:
+                continue
+            result.append(int(uid))
+        return result
+
+    def mark_address_reminder_sent(user_id: int) -> None:
+        meta = _ensure_meta(user_id)
+        meta["last_address_reminder_at"] = _now_iso()
+
+    def mark_sendcargo_reminder_sent(user_id: int) -> None:
+        meta = _ensure_meta(user_id)
+        meta["last_sendcargo_reminder_at"] = _now_iso()
+
+    def mark_inactive_reminder_sent(user_id: int) -> None:
+        meta = _ensure_meta(user_id)
+        meta["last_inactive_reminder_at"] = _now_iso()
+
 else:
     import psycopg2
     from psycopg2.pool import SimpleConnectionPool
@@ -242,7 +348,14 @@ else:
             """
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
-                code TEXT UNIQUE
+                code TEXT UNIQUE,
+                first_seen_at TIMESTAMPTZ,
+                last_activity_at TIMESTAMPTZ,
+                last_address_pressed_at TIMESTAMPTZ,
+                last_sendcargo_pressed_at TIMESTAMPTZ,
+                last_address_reminder_at TIMESTAMPTZ,
+                last_sendcargo_reminder_at TIMESTAMPTZ,
+                last_inactive_reminder_at TIMESTAMPTZ
             )
             """
         )
@@ -298,6 +411,14 @@ else:
         # Расширение схемы: добавляем статус отправки и дату обновления статуса
         _execute("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS status TEXT")
         _execute("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS status_updated_at TIMESTAMPTZ")
+        # Расширение схемы пользователей: добавляем поля активности/напоминаний, если их нет
+        _execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMPTZ")
+        _execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ")
+        _execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_address_pressed_at TIMESTAMPTZ")
+        _execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_sendcargo_pressed_at TIMESTAMPTZ")
+        _execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_address_reminder_at TIMESTAMPTZ")
+        _execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_sendcargo_reminder_at TIMESTAMPTZ")
+        _execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_inactive_reminder_at TIMESTAMPTZ")
         # Миграция: PBxxxxx -> EM03-xxxxx
         _execute(
             """
@@ -478,3 +599,89 @@ else:
     def count_user_shipments(user_id: int) -> int:
         row = _fetchone("SELECT COUNT(*) FROM shipments WHERE user_id=%s", (user_id,))
         return int(row[0]) if row and row[0] is not None else 0
+
+    # --- Reminders & activity (PostgreSQL mode) ---
+    def record_user_activity(user_id: int) -> None:
+        _execute(
+            """
+            INSERT INTO users (user_id, first_seen_at, last_activity_at)
+            VALUES (%s, NOW(), NOW())
+            ON CONFLICT (user_id) DO UPDATE
+            SET last_activity_at = NOW(),
+                first_seen_at = COALESCE(users.first_seen_at, EXCLUDED.first_seen_at)
+            """,
+            (user_id,)
+        )
+
+    def mark_pressed_address(user_id: int) -> None:
+        _execute(
+            """
+            INSERT INTO users (user_id, first_seen_at, last_activity_at, last_address_pressed_at)
+            VALUES (%s, NOW(), NOW(), NOW())
+            ON CONFLICT (user_id) DO UPDATE
+            SET last_activity_at = NOW(),
+                last_address_pressed_at = NOW(),
+                first_seen_at = COALESCE(users.first_seen_at, EXCLUDED.first_seen_at)
+            """,
+            (user_id,)
+        )
+
+    def mark_pressed_sendcargo(user_id: int) -> None:
+        _execute(
+            """
+            INSERT INTO users (user_id, first_seen_at, last_activity_at, last_sendcargo_pressed_at)
+            VALUES (%s, NOW(), NOW(), NOW())
+            ON CONFLICT (user_id) DO UPDATE
+            SET last_activity_at = NOW(),
+                last_sendcargo_pressed_at = NOW(),
+                first_seen_at = COALESCE(users.first_seen_at, EXCLUDED.first_seen_at)
+            """,
+            (user_id,)
+        )
+
+    def get_users_for_address_reminder(days: int = 5) -> List[int]:
+        rows = _fetchall(
+            f"""
+            SELECT user_id FROM users
+            WHERE first_seen_at IS NOT NULL
+              AND first_seen_at <= NOW() - INTERVAL '{int(days)} days'
+              AND last_address_pressed_at IS NULL
+              AND last_address_reminder_at IS NULL
+            """
+        )
+        return [int(r[0]) for r in rows]
+
+    def get_users_for_sendcargo_reminder(days: int = 15) -> List[int]:
+        rows = _fetchall(
+            f"""
+            SELECT user_id FROM users
+            WHERE first_seen_at IS NOT NULL
+              AND first_seen_at <= NOW() - INTERVAL '{int(days)} days'
+              AND last_sendcargo_pressed_at IS NULL
+              AND last_sendcargo_reminder_at IS NULL
+            """
+        )
+        return [int(r[0]) for r in rows]
+
+    def get_users_for_inactive_reminder(days: int = 30) -> List[int]:
+        rows = _fetchall(
+            f"""
+            SELECT user_id FROM users
+            WHERE last_activity_at IS NOT NULL
+              AND last_activity_at <= NOW() - INTERVAL '{int(days)} days'
+              AND (
+                    last_inactive_reminder_at IS NULL
+                 OR last_inactive_reminder_at < last_activity_at
+              )
+            """
+        )
+        return [int(r[0]) for r in rows]
+
+    def mark_address_reminder_sent(user_id: int) -> None:
+        _execute("UPDATE users SET last_address_reminder_at=NOW() WHERE user_id=%s", (user_id,))
+
+    def mark_sendcargo_reminder_sent(user_id: int) -> None:
+        _execute("UPDATE users SET last_sendcargo_reminder_at=NOW() WHERE user_id=%s", (user_id,))
+
+    def mark_inactive_reminder_sent(user_id: int) -> None:
+        _execute("UPDATE users SET last_inactive_reminder_at=NOW() WHERE user_id=%s", (user_id,))
