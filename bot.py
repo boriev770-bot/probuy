@@ -240,6 +240,19 @@ def clear_history_entry_keyboard() -> InlineKeyboardMarkup:
 	return kb
 
 
+def back_keyboard() -> InlineKeyboardMarkup:
+	kb = InlineKeyboardMarkup(row_width=1)
+	kb.add(InlineKeyboardButton("⬅️ Назад", callback_data="back_main"))
+	return kb
+
+
+def clear_history_with_back_keyboard() -> InlineKeyboardMarkup:
+	kb = InlineKeyboardMarkup(row_width=1)
+	kb.add(InlineKeyboardButton("🧹 Очистить историю", callback_data="menu_clearhistory"))
+	kb.add(InlineKeyboardButton("⬅️ Назад", callback_data="back_main"))
+	return kb
+
+
 def cargo_confirm_keyboard() -> InlineKeyboardMarkup:
 	kb = InlineKeyboardMarkup(row_width=2)
 	kb.add(
@@ -414,7 +427,8 @@ async def menu_mytracks(cb_or_msg, state: FSMContext):
 
 	tracks = get_tracks(user_id)
 	text = f"🔑 Ваш код клиента: <code>{code}</code>\n\n" + ("📦 Ваши трек-коды:\n\n" + format_tracks(tracks) if tracks else "Пока нет зарегистрированных трек-кодов")
-	await show_menu_screen(tgt.chat.id, text, reply_markup=clear_history_entry_keyboard(), parse_mode="HTML")
+	kb = clear_history_with_back_keyboard() if tracks else back_keyboard()
+	await show_menu_screen(tgt.chat.id, text, reply_markup=kb, parse_mode="HTML")
 
 
 @dp.callback_query_handler(lambda c: c.data == "menu_manager", state="*")
@@ -768,7 +782,8 @@ async def menu_photokontrol(cb_or_msg, state: FSMContext):
 	if user_tracks:
 		text_parts.append("📦 Ваши треки:\n\n" + format_tracks(user_tracks))
 	text_parts.append("📷 Отправьте трек-код, чтобы получить фото. Для отмены — /cancel")
-	await show_menu_screen(tgt.chat.id, "\n\n".join(text_parts), reply_markup=(clear_history_entry_keyboard() if user_tracks else None), parse_mode=("HTML" if user_tracks else None))
+	kb = clear_history_with_back_keyboard() if user_tracks else back_keyboard()
+	await show_menu_screen(tgt.chat.id, "\n\n".join(text_parts), reply_markup=kb, parse_mode=("HTML" if user_tracks else None))
 	await PhotoStates.waiting_for_track.set()
 
 
