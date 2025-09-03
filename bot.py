@@ -1,4 +1,5 @@
 import os
+import asyncio
 import logging
 import re
 from typing import List, Optional, Tuple
@@ -18,6 +19,7 @@ from aiogram.utils import executor
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.dispatcher.middlewares import BaseMiddleware
 
 from database import (
 	init_db,
@@ -39,6 +41,16 @@ from database import (
     list_user_shipments_by_status,
     delete_all_user_shipments,
     count_user_shipments,
+	# reminders/activity
+	record_user_activity,
+	mark_pressed_address,
+	mark_pressed_sendcargo,
+	get_users_for_address_reminder,
+	get_users_for_sendcargo_reminder,
+	get_users_for_inactive_reminder,
+	mark_address_reminder_sent,
+	mark_sendcargo_reminder_sent,
+	mark_inactive_reminder_sent,
 )
 
 
@@ -89,6 +101,22 @@ dp = Dispatcher(bot, storage=storage)
 
 # Держим одно «экранное» сообщение меню на чат и редактируем его вместо спама новыми сообщениями
 _menu_message_by_chat: dict[int, int] = {}
+
+
+class ActivityMiddleware(BaseMiddleware):
+    async def on_pre_process_message(self, message: types.Message, data: dict):
+        try:
+            if message.from_user:
+                record_user_activity(int(message.from_user.id))
+        except Exception:
+            pass
+
+    async def on_pre_process_callback_query(self, callback_query: CallbackQuery, data: dict):
+        try:
+            if callback_query.from_user:
+                record_user_activity(int(callback_query.from_user.id))
+        except Exception:
+            pass
 
 
 async def show_menu_screen(chat_id: int, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None, parse_mode: Optional[str] = "HTML") -> None:
@@ -362,6 +390,10 @@ async def menu_address(cb_or_msg, state: FSMContext):
 		return
 
 	await tgt.answer(CHINA_WAREHOUSE_ADDRESS.format(client_code=code), parse_mode="HTML")
+	try:
+		mark_pressed_address(int(user_id))
+	except Exception:
+		pass
 	await show_menu_screen(tgt.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 
 
@@ -516,6 +548,11 @@ async def menu_sendcargo(callback: CallbackQuery, state: FSMContext):
 	if not code:
 		await callback.message.answer("Сначала получите личный код: нажмите «🔑 Получить код».", reply_markup=get_main_menu_inline())
 		return
+
+	try:
+		mark_pressed_sendcargo(int(user_id))
+	except Exception:
+		pass
 
 	# Проверим, есть ли сохраненные данные получателя
 	saved = get_recipient(user_id)
@@ -1191,6 +1228,41 @@ async def fallback(message: types.Message):
 
 async def on_startup(dp: Dispatcher):
 	init_db()
+	try:
+		dp.middleware.setup(ActivityMiddleware())
+	except Exception:
+		pass
+
+	# Background reminder loop
+	async def reminder_loop():
+		while True:
+			try:
+				# 5-day: address
+				for uid in get_users_for_address_reminder(days=5):
+					try:
+						await bot.send_message(int(uid), "Возникли сложности ? Свяжись с менеджером, мы все подскажем!")
+						mark_address_reminder_sent(int(uid))
+					except Exception:
+						pass
+				# 15-day: send cargo
+				for uid in get_users_for_sendcargo_reminder(days=15):
+					try:
+						await bot.send_message(int(uid), "Вы уже сделали свои покупки ? Мы готовы их Вам отправить!")
+						mark_sendcargo_reminder_sent(int(uid))
+					except Exception:
+						pass
+				# 30-day: inactivity
+				for uid in get_users_for_inactive_reminder(days=30):
+					try:
+						await bot.send_message(int(uid), "Совершайте свои покупки из Китая вместе с ProBuy!")
+						mark_inactive_reminder_sent(int(uid))
+					except Exception:
+						pass
+			except Exception:
+				pass
+			await asyncio.sleep(3600)
+
+	dp.loop.create_task(reminder_loop())
 	try:
 		await bot.delete_webhook(drop_pending_updates=True)
 	except Exception:
