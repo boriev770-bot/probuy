@@ -237,6 +237,7 @@ def clear_history_confirm_keyboard() -> InlineKeyboardMarkup:
 def clear_history_entry_keyboard() -> InlineKeyboardMarkup:
 	kb = InlineKeyboardMarkup(row_width=1)
 	kb.add(InlineKeyboardButton("🧹 Очистить историю", callback_data="menu_clearhistory"))
+	kb.add(InlineKeyboardButton("⬅️ Назад", callback_data="back_main"))
 	return kb
 
 
