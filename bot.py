@@ -9,8 +9,6 @@ from aiogram.types import (
 	ContentType,
 	InlineKeyboardMarkup,
 	InlineKeyboardButton,
-	ReplyKeyboardMarkup,
-	KeyboardButton,
 	CallbackQuery,
     WebAppInfo,
     InputMediaPhoto,
@@ -204,14 +202,7 @@ def get_main_menu_inline() -> InlineKeyboardMarkup:
 	return kb
 
 
-def get_main_menu_reply() -> ReplyKeyboardMarkup:
-	kb = ReplyKeyboardMarkup(resize_keyboard=True)
-	kb.row(KeyboardButton("🛒 Заказать"), KeyboardButton("👨‍💼 Менеджер"))
-	kb.row(KeyboardButton("🔑 Получить код"), KeyboardButton("📍 Получить адрес"))
-	kb.row(KeyboardButton("🏭 Склад"), KeyboardButton("📦 Статус груза"))
-	kb.row(KeyboardButton("📷 Фотоконтроль"))
-	kb.row(KeyboardButton("🧹 Очистить историю"))
-	return kb
+ 
 
 
 DELIVERY_TYPES = {
@@ -635,7 +626,6 @@ async def handle_recipient_input(message: types.Message, state: FSMContext):
 
 
 @dp.callback_query_handler(lambda c: c.data == "menu_clearhistory", state="*")
-@dp.message_handler(lambda m: (m.text or "").strip() == "🧹 Очистить историю", state="*")
 async def clear_history_entry(cb_or_msg, state: FSMContext):
 	await state.finish()
 	if isinstance(cb_or_msg, CallbackQuery):
@@ -802,9 +792,7 @@ async def menu_photokontrol(cb_or_msg, state: FSMContext):
 	await PhotoStates.waiting_for_track.set()
 
 
-@dp.message_handler(lambda m: (m.text or "").strip() == "📷 Фотоконтроль", state="*")
-async def menu_photokontrol_reply_button(message: types.Message, state: FSMContext):
-	await menu_photokontrol(message, state)
+ 
 
 
 @dp.message_handler(state=PhotoStates.waiting_for_track, content_types=[ContentType.TEXT])
