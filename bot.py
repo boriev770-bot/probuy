@@ -18,6 +18,7 @@ from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.dispatcher.middlewares import BaseMiddleware
+from aiogram.dispatcher.handler import CancelHandler
 
 from database import (
 	init_db,
@@ -39,6 +40,11 @@ from database import (
     list_user_shipments_by_status,
     delete_all_user_shipments,
     count_user_shipments,
+	# admin
+	is_user_blocked,
+	block_user,
+	unblock_user,
+	delete_user_everything,
 	# reminders/activity
 	record_user_activity,
 	mark_pressed_address,
@@ -125,6 +131,26 @@ class ActivityMiddleware(BaseMiddleware):
         try:
             if callback_query.from_user:
                 record_user_activity(int(callback_query.from_user.id))
+        except Exception:
+            pass
+
+
+class BanMiddleware(BaseMiddleware):
+    async def on_pre_process_message(self, message: types.Message, data: dict):
+        try:
+            if message.from_user and is_user_blocked(int(message.from_user.id)):
+                raise CancelHandler()
+        except CancelHandler:
+            raise
+        except Exception:
+            pass
+
+    async def on_pre_process_callback_query(self, callback_query: CallbackQuery, data: dict):
+        try:
+            if callback_query.from_user and is_user_blocked(int(callback_query.from_user.id)):
+                raise CancelHandler()
+        except CancelHandler:
+            raise
         except Exception:
             pass
 
@@ -1269,6 +1295,102 @@ async def admin_findtracks(message: types.Message, state: FSMContext):
 	await message.answer(text, parse_mode="HTML")
 
 
+def _resolve_user_id_from_arg(arg: str) -> Optional[int]:
+    a = (arg or "").strip()
+    if not a:
+        return None
+    # If pure number -> telegram user id
+    if a.isdigit():
+        try:
+            return int(a)
+        except Exception:
+            return None
+    # If looks like client code
+    a_up = a.upper()
+    if a_up.startswith("EM"):
+        try:
+            uid = get_user_id_by_code(a_up)
+            return int(uid) if uid is not None else None
+        except Exception:
+            return None
+    return None
+
+
+def _is_admin(user_id: int) -> bool:
+    return user_id in {MANAGER_ID, WAREHOUSE_ID}
+
+
+@dp.message_handler(commands=["ban"], state="*")
+async def admin_ban(message: types.Message, state: FSMContext):
+    await state.finish()
+    if not _is_admin(message.from_user.id):
+        return
+    args = (message.get_args() or "").strip()
+    if not args:
+        await message.answer("Использование: /ban <telegram_id|EM03-xxxxx> [причина]")
+        return
+    parts = args.split(maxsplit=1)
+    target_raw = parts[0]
+    reason = parts[1] if len(parts) > 1 else None
+    uid = _resolve_user_id_from_arg(target_raw)
+    if not uid:
+        await message.answer("Пользователь не найден по указанному идентификатору")
+        return
+    try:
+        block_user(int(uid), reason)
+        await message.answer(f"Пользователь <code>{uid}</code> заблокирован.", parse_mode="HTML")
+    except Exception as e:
+        await message.answer(f"Ошибка блокировки: {e}")
+
+
+@dp.message_handler(commands=["unban"], state="*")
+async def admin_unban(message: types.Message, state: FSMContext):
+    await state.finish()
+    if not _is_admin(message.from_user.id):
+        return
+    args = (message.get_args() or "").strip()
+    if not args:
+        await message.answer("Использование: /unban <telegram_id|EM03-xxxxx>")
+        return
+    uid = _resolve_user_id_from_arg(args)
+    if not uid:
+        await message.answer("Пользователь не найден по указанному идентификатору")
+        return
+    try:
+        unblock_user(int(uid))
+        await message.answer(f"Пользователь <code>{uid}</code> разблокирован.", parse_mode="HTML")
+    except Exception as e:
+        await message.answer(f"Ошибка разблокировки: {e}")
+
+
+@dp.message_handler(commands=["wipe"], state="*")
+async def admin_wipe(message: types.Message, state: FSMContext):
+    await state.finish()
+    if not _is_admin(message.from_user.id):
+        return
+    args = (message.get_args() or "").strip()
+    if not args:
+        await message.answer("Использование: /wipe <telegram_id|EM03-xxxxx>")
+        return
+    uid = _resolve_user_id_from_arg(args)
+    if not uid:
+        await message.answer("Пользователь не найден по указанному идентификатору")
+        return
+    try:
+        result = delete_user_everything(int(uid))
+        await message.answer(
+            (
+                "Удаление завершено.\n"
+                f"Треки: {result.get('deleted_tracks', 0)}\n"
+                f"Фото: {result.get('deleted_photos', 0)}\n"
+                f"Грузы: {result.get('deleted_shipments', 0)}\n"
+                f"Получатель: {result.get('deleted_recipient', 0)}\n"
+                f"Пользователь: {result.get('deleted_user', 0)}\n"
+            )
+        )
+    except Exception as e:
+        await message.answer(f"Ошибка удаления: {e}")
+
 @dp.message_handler()
 async def fallback(message: types.Message):
 	await show_menu_screen(message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
@@ -1277,6 +1399,8 @@ async def fallback(message: types.Message):
 async def on_startup(dp: Dispatcher):
 	init_db()
 	try:
+		# Order matters: ban first, then activity
+		dp.middleware.setup(BanMiddleware())
 		dp.middleware.setup(ActivityMiddleware())
 	except Exception:
 		pass

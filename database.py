@@ -16,6 +16,7 @@ if DEV_MODE:
     _recipients: dict[int, dict] = {}
     _shipments: list[dict] = []
     _next_shipment_id: int = 1
+    _blocked_users: set[int] = set()
 
     def init_db() -> None:
         # Миграция кодов в новый формат EM03-xxxxx
@@ -205,6 +206,52 @@ if DEV_MODE:
 
     def count_user_shipments(user_id: int) -> int:
         return sum(1 for s in _shipments if int(s.get("user_id", 0)) == int(user_id))
+
+    # --- Admin / moderation (DEV mode) ---
+    def is_user_blocked(user_id: int) -> bool:
+        return int(user_id) in _blocked_users
+
+    def block_user(user_id: int, reason: Optional[str] = None) -> None:
+        _blocked_users.add(int(user_id))
+
+    def unblock_user(user_id: int) -> None:
+        _blocked_users.discard(int(user_id))
+
+    def delete_user_everything(user_id: int) -> dict:
+        # Collect user's tracks to also remove photos
+        user_id_int = int(user_id)
+        user_tracks = [t[0] for t in get_tracks(user_id_int)]
+        # Delete track photos for user's tracks
+        before_photos = len(_track_photos)
+        remaining_photos = [p for p in _track_photos if p.get("track") not in set(user_tracks)]
+        deleted_photos = before_photos - len(remaining_photos)
+        _track_photos.clear()
+        _track_photos.extend(remaining_photos)
+
+        # Delete tracks
+        deleted_tracks = delete_all_user_tracks(user_id_int)
+
+        # Delete shipments
+        deleted_shipments = delete_all_user_shipments(user_id_int)
+
+        # Delete recipient
+        had_recipient = 1 if _recipients.pop(user_id_int, None) else 0
+
+        # Delete user code and meta
+        had_code = 1 if _users.pop(user_id_int, None) else 0
+        _user_meta.pop(user_id_int, None)
+        _all_user_ids.discard(user_id_int)
+
+        # Remove from blocklist
+        unblock_user(user_id_int)
+
+        return {
+            "deleted_tracks": int(deleted_tracks),
+            "deleted_photos": int(deleted_photos),
+            "deleted_shipments": int(deleted_shipments),
+            "deleted_recipient": int(had_recipient),
+            "deleted_user": int(had_code),
+        }
 
     # --- Reminders & activity (DEV mode) ---
     def record_user_activity(user_id: int) -> None:
@@ -408,6 +455,16 @@ else:
             )
             """
         )
+        # Table for blocked users
+        _execute(
+            """
+            CREATE TABLE IF NOT EXISTS blocked_users (
+                user_id BIGINT PRIMARY KEY,
+                banned_at TIMESTAMPTZ DEFAULT NOW(),
+                reason TEXT
+            )
+            """
+        )
         # Расширение схемы: добавляем статус отправки и дату обновления статуса
         _execute("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS status TEXT")
         _execute("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS status_updated_at TIMESTAMPTZ")
@@ -599,6 +656,67 @@ else:
     def count_user_shipments(user_id: int) -> int:
         row = _fetchone("SELECT COUNT(*) FROM shipments WHERE user_id=%s", (user_id,))
         return int(row[0]) if row and row[0] is not None else 0
+
+    # --- Admin / moderation (PostgreSQL mode) ---
+    def is_user_blocked(user_id: int) -> bool:
+        row = _fetchone("SELECT 1 FROM blocked_users WHERE user_id=%s", (user_id,))
+        return bool(row)
+
+    def block_user(user_id: int, reason: Optional[str] = None) -> None:
+        _execute(
+            """
+            INSERT INTO blocked_users (user_id, reason, banned_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (user_id) DO UPDATE
+            SET reason = EXCLUDED.reason,
+                banned_at = NOW()
+            """,
+            (user_id, reason),
+        )
+
+    def unblock_user(user_id: int) -> None:
+        _execute("DELETE FROM blocked_users WHERE user_id=%s", (user_id,))
+
+    def delete_user_everything(user_id: int) -> dict:
+        pool = _get_pool()
+        conn = pool.getconn()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    # Count related records for reporting
+                    cur.execute("SELECT COUNT(*) FROM tracks WHERE user_id=%s", (user_id,))
+                    tracks_count = int(cur.fetchone()[0])
+                    cur.execute("SELECT COUNT(*) FROM shipments WHERE user_id=%s", (user_id,))
+                    shipments_count = int(cur.fetchone()[0])
+                    cur.execute("SELECT COUNT(*) FROM recipients WHERE user_id=%s", (user_id,))
+                    recipients_count = int(cur.fetchone()[0])
+
+                    # Delete photos for user's tracks
+                    cur.execute(
+                        """
+                        DELETE FROM track_photos
+                        WHERE track IN (SELECT track FROM tracks WHERE user_id=%s)
+                        """,
+                        (user_id,)
+                    )
+                    deleted_photos = cur.rowcount or 0
+
+                    # Remove from blocklist first
+                    cur.execute("DELETE FROM blocked_users WHERE user_id=%s", (user_id,))
+
+                    # Delete the user row (cascades to tracks/shipments/recipients)
+                    cur.execute("DELETE FROM users WHERE user_id=%s", (user_id,))
+                    deleted_users = cur.rowcount or 0
+
+                    return {
+                        "deleted_tracks": int(tracks_count),
+                        "deleted_photos": int(deleted_photos),
+                        "deleted_shipments": int(shipments_count),
+                        "deleted_recipient": int(recipients_count),
+                        "deleted_user": int(deleted_users),
+                    }
+        finally:
+            pool.putconn(conn)
 
     # --- Reminders & activity (PostgreSQL mode) ---
     def record_user_activity(user_id: int) -> None:

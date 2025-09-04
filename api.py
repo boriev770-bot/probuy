@@ -21,6 +21,7 @@ from database import (
     delete_all_user_tracks,
     init_db,
     find_user_ids_by_track,
+    is_user_blocked,
 )
 
 try:
@@ -93,6 +94,14 @@ async def tg_user_dep(
     user_id = user.get("id")
     if not user_id:
         raise HTTPException(status_code=401, detail="No user in init_data")
+    # Blocked users are not allowed to use API
+    try:
+        if is_user_blocked(int(user_id)):
+            raise HTTPException(status_code=403, detail="User is blocked")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
     return user
 
 class TrackRequest(BaseModel):
