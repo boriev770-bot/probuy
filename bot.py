@@ -379,15 +379,62 @@ async def menu_getcod(cb_or_msg, state: FSMContext):
 		await bot.answer_callback_query(cb_or_msg.id)
 		tgt = cb_or_msg.message
 		user_id = cb_or_msg.from_user.id
+		user = cb_or_msg.from_user
 	else:
 		tgt = cb_or_msg
 		user_id = cb_or_msg.from_user.id
+		user = cb_or_msg.from_user
 
 	code = get_user_code(user_id)
+	just_created = False
 	if not code:
 		code = get_or_create_user_code(user_id)
+		just_created = True
 
 	await show_menu_screen(tgt.chat.id, f"🔑 Ваш личный код клиента: <code>{code}</code>", reply_markup=get_main_menu_inline())
+
+	# Notify manager and warehouse when a new personal code is first created
+	if just_created:
+		try:
+			full_name = user.full_name or ""
+			username = f"@{user.username}" if user.username else "не указан"
+			tracks = get_tracks(user_id)
+			# Deduplicate while preserving order
+			seen = set()
+			unique_track_lines: List[str] = []
+			for t, _ in tracks:
+				if t in seen:
+					continue
+				seen.add(t)
+				unique_track_lines.append(f"{len(seen)}. <code>{t}</code>")
+
+			recipient = get_recipient(user_id)
+			recipient_block = ""
+			if recipient:
+				recipient_block = (
+					f"\n👤 Получатель: {recipient.get('fio','')}\n"
+					f"📞 Телефон: {recipient.get('phone','')}\n"
+					f"🏙️ Город доставки: {recipient.get('city','')}\n"
+				)
+
+			text = (
+				"🆕 <b>Новый пользователь получил личный код</b>\n\n"
+				f"🆔 Код клиента: <code>{code}</code>\n\n"
+				f"👤 Клиент: {full_name}\n"
+				f"📱 Username: {username}\n"
+				f"🆔 Telegram ID: <code>{user_id}</code>\n"
+				f"{recipient_block}\n"
+				"📚 Треки клиента:\n" + ("\n".join(unique_track_lines) if unique_track_lines else "Нет зарегистрированных трек-кодов")
+			)
+
+			admin_ids = {i for i in [MANAGER_ID, WAREHOUSE_ID] if i}
+			for admin_id in admin_ids:
+				try:
+					await bot.send_message(admin_id, text, parse_mode="HTML")
+				except Exception as e:
+					logger.exception("Failed to notify admin %s about new code: %s", admin_id, e)
+		except Exception as e:
+			logger.exception("Failed to build/send new user code notification: %s", e)
 
 
 @dp.callback_query_handler(lambda c: c.data == "menu_address", state="*")
