@@ -1020,6 +1020,8 @@ async def admin_shipped_with_photo(message: types.Message, state: FSMContext):
 			caption=f"📦 Ваш груз <b>{cargo_code}</b> упакован и отгружен в транспортную компанию.",
 			parse_mode="HTML",
 		)
+		# После отправки фото — показываем главное меню
+		await show_menu_screen(user_id, "Выберите действие:", reply_markup=get_main_menu_inline())
 		await message.answer("✅ Уведомление клиенту отправлено")
 	except Exception as e:
 		logger.exception("Failed to notify user about shipped cargo (single message): %s", e)
@@ -1072,6 +1074,8 @@ async def warehouse_photo_upload(message: types.Message, state: FSMContext):
 	for uid in set(user_ids):
 		try:
 			await bot.send_photo(uid, file_id, caption=f"📷 Фото по треку: <code>{track}</code>", parse_mode="HTML")
+			# После отправки фото — показываем главное меню
+			await show_menu_screen(uid, "Выберите действие:", reply_markup=get_main_menu_inline())
 			sent_count += 1
 		except Exception as e:
 			logger.exception("Failed to deliver track photo to user %s: %s", uid, e)
@@ -1131,8 +1135,12 @@ async def admin_shipped_finish(message: types.Message, state: FSMContext):
 	try:
 		if len(group) == 1:
 			await bot.send_photo(user_id, group[0].media, caption=group[0].caption, parse_mode="HTML")
+			# После отправки фото — показываем главное меню
+			await show_menu_screen(user_id, "Выберите действие:", reply_markup=get_main_menu_inline())
 		else:
 			await bot.send_media_group(user_id, group)
+			# После отправки медиа-группы — показываем главное меню
+			await show_menu_screen(user_id, "Выберите действие:", reply_markup=get_main_menu_inline())
 		await bot.send_message(user_id, f"✅ Ваш груз <b>{cargo_code}</b> отправлен. Фото во вложении.", parse_mode="HTML")
 		await message.answer("✅ Уведомление клиенту отправлено")
 	except Exception as e:
