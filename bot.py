@@ -103,6 +103,18 @@ dp = Dispatcher(bot, storage=storage)
 _menu_message_by_chat: dict[int, int] = {}
 
 
+async def _remove_reply_keyboard(chat_id: int) -> None:
+    """Send a transient message to remove any ReplyKeyboard and delete it."""
+    try:
+        tmp = await bot.send_message(chat_id, "\u2063", reply_markup=types.ReplyKeyboardRemove())
+        try:
+            await bot.delete_message(chat_id, tmp.message_id)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
 class ActivityMiddleware(BaseMiddleware):
     async def on_pre_process_message(self, message: types.Message, data: dict):
         try:
@@ -120,6 +132,8 @@ class ActivityMiddleware(BaseMiddleware):
 
 
 async def show_menu_screen(chat_id: int, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None, parse_mode: Optional[str] = "HTML") -> None:
+	# Ensure any ReplyKeyboard is hidden before showing menus
+	await _remove_reply_keyboard(chat_id)
 	message_id = _menu_message_by_chat.get(chat_id)
 	if message_id:
 		try:
