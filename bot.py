@@ -597,7 +597,7 @@ async def handle_buy_details(message: types.Message, state: FSMContext):
 			logger.exception("Failed to notify manager: %s", e)
 
 	await state.finish()
-	await message.answer("✅ Ваш запрос отправлен менеджеру. Он свяжется с вами.")
+	await message.answer("✅ Ваш запрос отправлен менеджеру. Он свяжется с вами.", reply_markup=back_keyboard())
 	await show_menu_screen(message.chat.id, "Выберите действие:", reply_markup=get_main_menu_inline())
 
 
@@ -891,7 +891,8 @@ async def handle_photo_request(message: types.Message, state: FSMContext):
 	for file_id in photos:
 		try:
 			caption = f"📷 Фото по треку: <code>{track}</code>" if first else None
-			await bot.send_photo(message.chat.id, file_id, caption=caption, parse_mode="HTML")
+			reply_markup = back_keyboard() if first else None
+			await bot.send_photo(message.chat.id, file_id, caption=caption, parse_mode="HTML", reply_markup=reply_markup)
 			first = False
 		except Exception as e:
 			logger.exception("Failed to send track photo to user: %s", e)
@@ -1095,6 +1096,7 @@ async def admin_shipped_with_photo(message: types.Message, state: FSMContext):
 			message.photo[-1].file_id,
 			caption=f"📦 Ваш груз <b>{cargo_code}</b> упакован и отгружен в транспортную компанию.",
 			parse_mode="HTML",
+			reply_markup=back_keyboard(),
 		)
 		# После отправки фото — показываем главное меню
 		await show_menu_screen(user_id, "Выберите действие:", reply_markup=get_main_menu_inline())
@@ -1149,7 +1151,13 @@ async def warehouse_photo_upload(message: types.Message, state: FSMContext):
 	sent_count = 0
 	for uid in set(user_ids):
 		try:
-			await bot.send_photo(uid, file_id, caption=f"📷 Фото по треку: <code>{track}</code>", parse_mode="HTML")
+			await bot.send_photo(
+				uid,
+				file_id,
+				caption=f"📷 Фото по треку: <code>{track}</code>",
+				parse_mode="HTML",
+				reply_markup=back_keyboard(),
+			)
 			# После отправки фото — показываем главное меню
 			await show_menu_screen(uid, "Выберите действие:", reply_markup=get_main_menu_inline())
 			sent_count += 1
@@ -1210,7 +1218,13 @@ async def admin_shipped_finish(message: types.Message, state: FSMContext):
 
 	try:
 		if len(group) == 1:
-			await bot.send_photo(user_id, group[0].media, caption=group[0].caption, parse_mode="HTML")
+			await bot.send_photo(
+				user_id,
+				group[0].media,
+				caption=group[0].caption,
+				parse_mode="HTML",
+				reply_markup=back_keyboard(),
+			)
 			# После отправки фото — показываем главное меню
 			await show_menu_screen(user_id, "Выберите действие:", reply_markup=get_main_menu_inline())
 		else:
