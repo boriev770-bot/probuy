@@ -28,16 +28,24 @@ if DEV_MODE:
             if not code:
                 continue
             if code.startswith("EM03-"):
+                # Нормализуем EM03-цифры к минимуму 4 цифры с сохранением числового значения
+                try:
+                    num_part = code.split("-", 1)[1]
+                    if num_part.isdigit():
+                        migrated[uid] = f"EM03-{int(num_part):04d}"
+                        continue
+                except Exception:
+                    pass
                 migrated[uid] = code
                 continue
-            # PBxxxxx -> EM03-xxxxx
+            # PBxxxxx -> EM03-xxxx (мин. 4 цифры)
             if code.startswith("PB") and len(code) >= 7 and code[2:].isdigit():
-                migrated[uid] = f"EM03-{int(code[2:]):05d}"
+                migrated[uid] = f"EM03-{int(code[2:]):04d}"
                 continue
             # Попробуем извлечь числовую часть и нормализовать
             digits = "".join(ch for ch in code if ch.isdigit())
             if digits:
-                migrated[uid] = f"EM03-{int(digits):05d}"
+                migrated[uid] = f"EM03-{int(digits):04d}"
             else:
                 migrated[uid] = code
         if migrated:
@@ -77,7 +85,7 @@ if DEV_MODE:
                         max_num = num
             except Exception:
                 continue
-        return f"EM03-{max_num + 1:05d}"
+        return f"EM03-{max_num + 1:04d}"
 
     def get_user_code(user_id: int) -> Optional[str]:
         return _users.get(user_id)
@@ -476,14 +484,36 @@ else:
         _execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_address_reminder_at TIMESTAMPTZ")
         _execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_sendcargo_reminder_at TIMESTAMPTZ")
         _execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_inactive_reminder_at TIMESTAMPTZ")
-        # Миграция: PBxxxxx -> EM03-xxxxx
+        # Миграции кодов:
+        # 1) Любые не-EM коды -> EM03-xxxx (минимум 4 цифры, без обрезания длинных значений)
         _execute(
             """
             UPDATE users
-            SET code = 'EM03-' || LPAD(REGEXP_REPLACE(code, '\\D', '', 'g'), 5, '0')
+            SET code = 'EM03-' || (
+                CASE
+                    WHEN LENGTH(REGEXP_REPLACE(code, '\\D', '', 'g')) < 4
+                        THEN LPAD(REGEXP_REPLACE(code, '\\D', '', 'g'), 4, '0')
+                    ELSE REGEXP_REPLACE(code, '\\D', '', 'g')
+                END
+            )
             WHERE code IS NOT NULL
               AND code NOT LIKE 'EM03-%'
               AND REGEXP_REPLACE(code, '\\D', '', 'g') <> ''
+            """
+        )
+
+        # 2) Нормализация уже существующих EM-кодов к формату EM03-xxxx (минимум 4 цифры)
+        _execute(
+            """
+            UPDATE users u
+            SET code = 'EM03-' || (
+                CASE
+                    WHEN LENGTH(REGEXP_REPLACE(SUBSTRING(u.code FROM '^EM\\d{2}-(\\d+)$'), '\\D', '', 'g')) < 4
+                        THEN LPAD(REGEXP_REPLACE(SUBSTRING(u.code FROM '^EM\\d{2}-(\\d+)$'), '\\D', '', 'g'), 4, '0')
+                    ELSE REGEXP_REPLACE(SUBSTRING(u.code FROM '^EM\\d{2}-(\\d+)$'), '\\D', '', 'g')
+                END
+            )
+            WHERE u.code ~ '^EM\\d{2}-\\d+$'
             """
         )
 
@@ -505,7 +535,7 @@ else:
             except Exception:
                 continue
         next_num = max_num + 1
-        return f"EM03-{next_num:05d}"
+        return f"EM03-{next_num:04d}"
 
     def get_or_create_user_code(user_id: int) -> str:
         pool = _get_pool()
