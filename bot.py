@@ -1342,7 +1342,7 @@ async def admin_ban(message: types.Message, state: FSMContext):
         return
     args = (message.get_args() or "").strip()
     if not args:
-        await message.answer("Использование: /ban <telegram_id|EM03-xxxxx> [причина]")
+        await message.answer("Использование: /ban <telegram_id|EM03-xxxx> [причина]")
         return
     parts = args.split(maxsplit=1)
     target_raw = parts[0]
@@ -1365,7 +1365,7 @@ async def admin_unban(message: types.Message, state: FSMContext):
         return
     args = (message.get_args() or "").strip()
     if not args:
-        await message.answer("Использование: /unban <telegram_id|EM03-xxxxx>")
+        await message.answer("Использование: /unban <telegram_id|EM03-xxxx>")
         return
     uid = _resolve_user_id_from_arg(args)
     if not uid:
@@ -1385,7 +1385,7 @@ async def admin_wipe(message: types.Message, state: FSMContext):
         return
     args = (message.get_args() or "").strip()
     if not args:
-        await message.answer("Использование: /wipe <telegram_id|EM03-xxxxx>")
+        await message.answer("Использование: /wipe <telegram_id|EM03-xxxx>")
         return
     uid = _resolve_user_id_from_arg(args)
     if not uid:
