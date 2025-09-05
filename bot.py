@@ -95,7 +95,7 @@ if not BOT_TOKEN:
 CHINA_WAREHOUSE_ADDRESS = (
 	"张生生{client_code}\n"
 	"16604524466 \n"
-	"广东省 佛山市 南海区 里水镇 东秀路 河塱沙5号 一楼仓库EM00-ХХХХХ"
+	"广东省 佛山市 南海区 里水镇 东秀路 河塱沙5号 一楼仓库EM00-ХХХХ"
 )
 
 bot = Bot(token=BOT_TOKEN)
@@ -366,14 +366,15 @@ def extract_cargo_code(text: Optional[str]) -> Optional[str]:
 	if not text:
 		return None
 	raw = (text or "").strip().upper()
-	# Ожидаем полный номер груза: EM03-00001-1
-	m = re.search(r"\bEM\d{2}-\d{5}-\d+\b", raw)
+	# Ожидаем полный номер груза: EM03-0001-1 (или больше цифр в средней части)
+	m = re.search(r"\bEM\d{2}-\d{4,}-\d+\b", raw)
 	if m:
 		return m.group(0)
-	# Попытка нормализации: EM03 00001 1 или EM03-00001 1 -> EM03-00001-1
-	m = re.search(r"\b(EM\d{2})\D*(\d{5})\D*(\d+)\b", raw)
+	# Попытка нормализации: EM03 0001 1 или EM03-0001 1 -> EM03-0001-1
+	m = re.search(r"\b(EM\d{2})\D*(\d{4,})\D*(\d+)\b", raw)
 	if m:
-		return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+		mid = f"{int(m.group(2)):04d}"
+		return f"{m.group(1)}-{mid}-{m.group(3)}"
 	return None
 
 
@@ -1079,7 +1080,7 @@ async def admin_shipped_with_photo(message: types.Message, state: FSMContext):
 
 	cargo_code = extract_cargo_code(caption_text)
 	if not cargo_code:
-		await message.answer("Укажите номер груза в подписи, например: /shipped EM03-00001-1")
+		await message.answer("Укажите номер груза в подписи, например: /shipped EM03-0001-1")
 		return
 	user_id = get_user_id_by_cargo_code(cargo_code)
 	if not user_id:
@@ -1181,7 +1182,7 @@ async def admin_shipped_start(message: types.Message, state: FSMContext):
 	args = (message.get_args() or "").strip()
 	cargo_code = extract_cargo_code(args)
 	if not cargo_code:
-		await message.answer("Укажите номер груза, например: /shipped EM03-00001-1")
+		await message.answer("Укажите номер груза, например: /shipped EM03-0001-1")
 		return
 	user_id = get_user_id_by_cargo_code(cargo_code)
 	if not user_id:
@@ -1267,7 +1268,7 @@ async def admin_findtracks(message: types.Message, state: FSMContext):
 		return
 	args = (message.get_args() or "").strip()
 	if not args:
-		await message.answer("Использование: /findtracks EM03-00001")
+		await message.answer("Использование: /findtracks EM03-0001")
 		return
 	code = args.upper()
 	user_id = get_user_id_by_code(code)
