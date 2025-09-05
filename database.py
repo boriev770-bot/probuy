@@ -19,7 +19,7 @@ if DEV_MODE:
     _blocked_users: set[int] = set()
 
     def init_db() -> None:
-        # Миграция кодов в новый формат EM03-xxxxx
+        # Миграция кодов в новый формат EM03-xxxx
         global _users
         if not _users:
             return
@@ -491,9 +491,15 @@ else:
             UPDATE users
             SET code = 'EM03-' || (
                 CASE
-                    WHEN LENGTH(REGEXP_REPLACE(code, '\\D', '', 'g')) < 4
-                        THEN LPAD(REGEXP_REPLACE(code, '\\D', '', 'g'), 4, '0')
-                    ELSE REGEXP_REPLACE(code, '\\D', '', 'g')
+                    WHEN REGEXP_REPLACE(code, '\\D', '', 'g') <> '' THEN
+                        (
+                            CASE
+                                WHEN LENGTH(CAST(CAST(REGEXP_REPLACE(code, '\\D', '', 'g') AS BIGINT) AS TEXT)) < 4
+                                    THEN LPAD(CAST(CAST(REGEXP_REPLACE(code, '\\D', '', 'g') AS BIGINT) AS TEXT), 4, '0')
+                                ELSE CAST(CAST(REGEXP_REPLACE(code, '\\D', '', 'g') AS BIGINT) AS TEXT)
+                            END
+                        )
+                    ELSE NULL
                 END
             )
             WHERE code IS NOT NULL
@@ -508,9 +514,9 @@ else:
             UPDATE users u
             SET code = 'EM03-' || (
                 CASE
-                    WHEN LENGTH(REGEXP_REPLACE(SUBSTRING(u.code FROM '^EM\\d{2}-(\\d+)$'), '\\D', '', 'g')) < 4
-                        THEN LPAD(REGEXP_REPLACE(SUBSTRING(u.code FROM '^EM\\d{2}-(\\d+)$'), '\\D', '', 'g'), 4, '0')
-                    ELSE REGEXP_REPLACE(SUBSTRING(u.code FROM '^EM\\d{2}-(\\d+)$'), '\\D', '', 'g')
+                    WHEN LENGTH(CAST(CAST(REGEXP_REPLACE(SUBSTRING(u.code FROM '^EM\\d{2}-(\\d+)$'), '\\D', '', 'g') AS BIGINT) AS TEXT)) < 4
+                        THEN LPAD(CAST(CAST(REGEXP_REPLACE(SUBSTRING(u.code FROM '^EM\\d{2}-(\\d+)$'), '\\D', '', 'g') AS BIGINT) AS TEXT), 4, '0')
+                    ELSE CAST(CAST(REGEXP_REPLACE(SUBSTRING(u.code FROM '^EM\\d{2}-(\\d+)$'), '\\D', '', 'g') AS BIGINT) AS TEXT)
                 END
             )
             WHERE u.code ~ '^EM\\d{2}-\\d+$'
@@ -522,7 +528,7 @@ else:
         return row[0] if row else None
 
     def _generate_next_code_tx(cur) -> str:
-        # Берем все коды EM03-xxxxx, находим максимальный номер и увеличиваем
+        # Берем все коды EM03-xxxx, находим максимальный номер и увеличиваем
         cur.execute("SELECT code FROM users WHERE code LIKE 'EM03-%'")
         rows = cur.fetchall()
         max_num = 0
